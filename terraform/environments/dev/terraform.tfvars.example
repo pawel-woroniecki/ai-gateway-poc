@@ -1,0 +1,16 @@
+# ============================================================================
+# Przykładowy plik zmiennych – skopiuj do terraform.tfvars i uzupełnij
+# UWAGA: terraform.tfvars jest w .gitignore – nie commituj!
+# ============================================================================
+
+project_id          = "my-gcp-project-id"
+region              = "europe-central2"
+zone                = "europe-central2-a"
+state_bucket        = "my-gcp-project-id-tfstate"
+terraform_sa_email  = "ai-gateway-terraform@my-gcp-project-id.iam.gserviceaccount.com"
+
+# Opcjonalne – domyślne wartości zwykle wystarczą dla PoC
+# network_name  = "ai-gateway-vpc"
+# cluster_name  = "ai-gateway-cluster"
+# machine_type  = "e2-standard-2"
+# node_count    = 1

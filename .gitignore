@@ -1,0 +1,53 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Secrets – NEVER commit
+terraform.tfvars
+*.auto.tfvars
+secrets/
+*.pem
+*.key
+
+# GCP credentials
+*-credentials.json
+service-account-*.json
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (PCA)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Helm
+*.tgz
+
+# Logs
+*.log

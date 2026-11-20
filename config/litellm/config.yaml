@@ -1,0 +1,62 @@
+# ============================================================================
+# LiteLLM Proxy – konfiguracja modeli i routingu
+# ============================================================================
+
+model_list:
+  # --- Vertex AI Gemini Flash (strefa C-EU) ---
+  - model_name: "gemini-flash"
+    litellm_params:
+      model: "vertex_ai/gemini-2.0-flash"
+      vertex_project: "${GCP_PROJECT_ID}"
+      vertex_location: "europe-west1"
+    model_info:
+      metadata:
+        zone: "C-EU"
+        provider: "vertex_ai"
+        description: "Google Gemini Flash via Vertex AI – strefa C-EU"
+
+  # --- Anthropic Claude (strefa C-GL) ---
+  - model_name: "claude-sonnet"
+    litellm_params:
+      model: "anthropic/claude-sonnet-4-20250514"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+    model_info:
+      metadata:
+        zone: "C-GL"
+        provider: "anthropic"
+        description: "Anthropic Claude Sonnet – strefa C-GL"
+
+  # --- Mock local backend (strefa local) ---
+  - model_name: "mock-local"
+    litellm_params:
+      model: "openai/mock-local"
+      api_base: "http://mock-backend:8080/v1"
+      api_key: "mock-key-not-used"
+    model_info:
+      metadata:
+        zone: "local"
+        provider: "mock"
+        description: "Mock backend lokalny – strefa local, do testów"
+
+# --- Ustawienia ogólne ---
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  num_retries: 2
+  request_timeout: 30
+  cache: false
+
+  # Callbacki
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+
+# --- Rate limiting (na poziomie kluczy wirtualnych) ---
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  database_url: "os.environ/DATABASE_URL"
+
+  # Langfuse
+  environment_variables:
+    LANGFUSE_PUBLIC_KEY: "os.environ/LANGFUSE_PUBLIC_KEY"
+    LANGFUSE_SECRET_KEY: "os.environ/LANGFUSE_SECRET_KEY"
+    LANGFUSE_HOST: "os.environ/LANGFUSE_HOST"

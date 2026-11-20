@@ -1,0 +1,96 @@
+# ============================================================================
+# Helm values – LiteLLM Proxy dla środowiska dev
+# Chart: https://github.com/BerriAI/litellm/tree/main/deploy/charts/litellm-helm
+# ============================================================================
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/berriai/litellm
+  tag: "main-latest"
+  pullPolicy: IfNotPresent
+
+# --- Konfiguracja proxy ---
+masterkeySecretName: litellm-secrets
+masterkeySecretKey: master-key
+
+# --- Proxy config z ConfigMap ---
+proxy_config:
+  existingConfigMap: litellm-config
+  existingConfigMapKey: config.yaml
+
+# --- Postgres (subchart) ---
+postgresql:
+  enabled: true
+  auth:
+    username: litellm
+    password: litellm-poc-password  # PoC only – w produkcji Secret
+    database: litellm
+  primary:
+    persistence:
+      enabled: false  # PoC – brak persistent volumes
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+
+# --- Redis (subchart) ---
+redis:
+  enabled: true
+  auth:
+    enabled: false  # PoC – uproszczenie
+  master:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "200m"
+        memory: "128Mi"
+
+# --- Resources ---
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# --- Service ---
+service:
+  type: ClusterIP
+  port: 4000
+
+# --- ServiceAccount z Workload Identity ---
+serviceAccount:
+  create: true
+  name: litellm
+  annotations: {}
+  # Zostanie nadpisane w skrypcie up.sh:
+  # iam.gke.io/gcp-service-account: ai-gateway-litellm@PROJECT_ID.iam.gserviceaccount.com
+
+# --- Health checks ---
+livenessProbe:
+  httpGet:
+    path: /health/liveliness
+    port: 4000
+  initialDelaySeconds: 30
+  periodSeconds: 15
+
+readinessProbe:
+  httpGet:
+    path: /health/readiness
+    port: 4000
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+# --- Env vars dodatkowe ---
+extraEnvVars:
+  - name: LITELLM_LOG
+    value: "INFO"

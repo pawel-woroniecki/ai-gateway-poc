@@ -1,0 +1,61 @@
+{
+  "errors": {
+    "policy_denied": {
+      "code": 403,
+      "message": "Żądanie zablokowane przez politykę bezpieczeństwa",
+      "detail": "Klasa danych {data_class} nie jest dozwolona w strefie {zone}",
+      "user_action": "Sprawdź macierz dopuszczalności danych lub skontaktuj się z administratorem"
+    },
+    "rate_limit_exceeded": {
+      "code": 429,
+      "message": "Przekroczono limit zapytań",
+      "detail": "Limit {limit_type}: {current}/{max} dla klucza {key_alias}",
+      "user_action": "Poczekaj {retry_after} sekund przed ponownym zapytaniem"
+    },
+    "budget_exceeded": {
+      "code": 429,
+      "message": "Przekroczono budżet",
+      "detail": "Wykorzystano {used}/{max} {currency} dla {scope}",
+      "user_action": "Skontaktuj się z administratorem w celu zwiększenia budżetu"
+    },
+    "pii_detected": {
+      "code": 400,
+      "message": "Wykryto dane osobowe w zapytaniu",
+      "detail": "Typy wykryte: {pii_types}",
+      "user_action": "Usuń dane osobowe z zapytania i spróbuj ponownie"
+    },
+    "guardrails_unavailable": {
+      "code": 503,
+      "message": "Usługa klasyfikacji tymczasowo niedostępna",
+      "detail": "Tryb fail-closed: ruch do chmury zablokowany",
+      "user_action": "Spróbuj ponownie za chwilę. Zapytania do modeli lokalnych są nadal dostępne."
+    },
+    "invalid_headers": {
+      "code": 400,
+      "message": "Brakujące lub nieprawidłowe nagłówki zapytania",
+      "detail": "Wymagane nagłówki: x-aigw-use-case, x-aigw-data-class",
+      "user_action": "Uzupełnij wymagane nagłówki zgodnie z dokumentacją API"
+    },
+    "model_unavailable": {
+      "code": 503,
+      "message": "Model tymczasowo niedostępny",
+      "detail": "Model {model} w strefie {zone} nie odpowiada",
+      "user_action": "System automatycznie spróbuje przekierować do innego modelu w dozwolonej strefie"
+    },
+    "secret_detected_output": {
+      "code": 500,
+      "message": "Odpowiedź modelu zablokowana przez guardrails",
+      "detail": "Wykryto potencjalne sekrety w odpowiedzi LLM",
+      "user_action": "Wynik zapytania nie może być dostarczony. Skontaktuj się z administratorem."
+    }
+  },
+  "headers": {
+    "x-aigw-degraded": {
+      "description": "Informuje klienta o pracy w trybie degradowanym",
+      "values": {
+        "guardrails-unavailable": "Usługa klasyfikacji niedostępna – tylko modele lokalne",
+        "rate-limited": "Aktywny limit zapytań"
+      }
+    }
+  }
+}
