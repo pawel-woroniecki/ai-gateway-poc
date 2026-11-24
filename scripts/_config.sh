@@ -6,6 +6,9 @@
 #   source "${SCRIPT_DIR}/_config.sh"
 # ============================================================================
 
+# Konto billingowe GCP (nadpisywane przez: export BILLING_ACCOUNT="...")
+BILLING_ACCOUNT="${BILLING_ACCOUNT:-017C3F-481026-534AC8}"
+
 # Centralny bucket na Terraform state (w osobnym projekcie GCP)
 CENTRAL_BUCKET="reinventor-terraform-states"
 

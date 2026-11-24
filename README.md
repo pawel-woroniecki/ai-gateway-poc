@@ -107,30 +107,46 @@ Szczegółowe instrukcje: patrz folder [`instrukcje/`](instrukcje/).
 
 ### Minimalne kroki
 
-```bash
-# 1. Ustaw billing account
-export BILLING_ACCOUNT="XXXXXX-XXXXXX-XXXXXX"
+Domyślne wartości (billing account, region, zona) są skonfigurowane w `scripts/_config.sh`. Cały flow działa bez żadnego `export`:
 
-# 2. Utwórz projekt GCP
+```bash
+# 1. Utwórz projekt GCP
 ./scripts/create-project.sh
 
-# 3. Bootstrap (PROJECT_ID wykryty automatycznie)
+# 2. Bootstrap (PROJECT_ID wykryty automatycznie z .project-env)
 ./scripts/bootstrap.sh
 
-# 4. Deploy
-export ANTHROPIC_API_KEY="sk-ant-..."    # opcjonalnie
+# 3. Deploy
 ./scripts/up.sh
 
-# 5. Test
+# 4. Test
 kubectl port-forward svc/litellm 4000:4000
 curl http://localhost:4000/health/liveliness
 
-# 6. Teardown
+# 5. Teardown
 ./scripts/down.sh
 
-# 7. Usunięcie projektu (opcjonalnie)
+# 6. Usunięcie projektu (opcjonalnie)
 ./scripts/destroy-project.sh
 ```
+
+### Zmienne środowiskowe
+
+Wszystkie zmienne mają wartości domyślne – `export` potrzebny tylko gdy chcesz je zmienić.
+
+| Zmienna | Domyślna wartość | Opis |
+|---|---|---|
+| `BILLING_ACCOUNT` | *(skonfigurowany w `_config.sh`)* | ID konta billingowego GCP |
+| `PROJECT_ID` | *(auto z `.project-env`)* | ID projektu GCP |
+| `SUFFIX` | *(auto z `.project-env`)* | 4-literowy suffix projektu |
+| `REGION` | `europe-central2` | Region GCP |
+| `ZONE` | `europe-central2-a` | Zona GCP |
+| `CLUSTER_NAME` | `ai-gateway-cluster` | Nazwa klastra GKE |
+| `ANTHROPIC_API_KEY` | *(puste)* | Klucz API Anthropic (opcjonalnie, do testów z Claude) |
+| `LANGFUSE_PUBLIC_KEY` | *(puste)* | Klucz publiczny Langfuse (opcjonalnie) |
+| `LANGFUSE_SECRET_KEY` | *(puste)* | Klucz prywatny Langfuse (opcjonalnie) |
+| `ORG_ID` | *(puste)* | ID organizacji GCP (opcjonalnie) |
+| `FOLDER_ID` | *(puste)* | ID folderu GCP (opcjonalnie) |
 
 ## Zarządzanie projektem GCP
 
