@@ -68,13 +68,15 @@ redis:
   enabled: false
 
 # --- Resources ---
+# Oficjalne minimum LiteLLM: 4Gi RAM / 1 CPU na worker (1 worker na pod).
+# Ref: https://docs.litellm.ai/docs/proxy/prod
 resources:
   requests:
-    cpu: "200m"
-    memory: "512Mi"
-  limits:
     cpu: "1"
-    memory: "1Gi"
+    memory: "4Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
 
 # --- Service ---
 service:
