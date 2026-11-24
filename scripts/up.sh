@@ -145,11 +145,7 @@ echo ""
 echo ">>> [5/5] Helm install – LiteLLM..."
 cd "$ROOT_DIR"
 
-# Dodaj repo jeśli nie istnieje
-helm repo add litellm https://berriai.github.io/litellm/ 2>/dev/null || true
-helm repo update
-
-if ! helm upgrade --install litellm litellm/litellm-helm \
+if ! helm upgrade --install litellm oci://ghcr.io/berriai/litellm-helm \
   -f helm/values/litellm-dev.yaml \
   --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=${LITELLM_SA}" \
   --set "extraEnvVars[1].name=GCP_PROJECT_ID" \
