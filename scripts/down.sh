@@ -12,6 +12,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
 auto_detect_project
 
+# --- Sprawdzenie wymagań ---
+check_requirements() {
+  local missing=()
+  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
+  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
+  command -v kubectl >/dev/null 2>&1   || missing+=("kubectl")
+  command -v helm >/dev/null 2>&1      || missing+=("helm")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
+    exit 1
+  fi
+}
+check_requirements
+
 : "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
 : "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
 REGION="${REGION:-europe-central2}"
@@ -56,16 +71,22 @@ echo ">>> [4/4] Terraform destroy – infrastruktura..."
 
 cd "$ROOT_DIR/terraform/environments/dev"
 
-terraform init \
+if ! terraform init \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${DEV_STATE_PREFIX}" \
-  -input=false
+  -input=false; then
+  echo "BŁĄD: terraform init nie powiodło się." >&2
+  exit 1
+fi
 
-terraform destroy \
+if ! terraform destroy \
   -var="project_id=${PROJECT_ID}" \
   -var="region=${REGION}" \
   -var="zone=${ZONE}" \
-  -auto-approve
+  -auto-approve; then
+  echo "BŁĄD: terraform destroy nie powiodło się." >&2
+  exit 1
+fi
 
 echo ""
 echo "============================================"

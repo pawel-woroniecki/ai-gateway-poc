@@ -21,6 +21,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
 auto_detect_project
 
+# --- Sprawdzenie wymagań ---
+check_requirements() {
+  local missing=()
+  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
+  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
+    exit 1
+  fi
+}
+check_requirements
+
 : "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
 : "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
 REGION="${REGION:-europe-central2}"
@@ -42,18 +55,29 @@ gcloud config set project "${PROJECT_ID}"
 cd "${BOOTSTRAP_DIR}"
 
 echo ">>> terraform init..."
-terraform init \
+if ! terraform init \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${BOOTSTRAP_PREFIX}" \
-  -input=false
+  -input=false; then
+  echo "BŁĄD: terraform init nie powiodło się." >&2
+  exit 1
+fi
 
 echo ">>> terraform apply..."
-terraform apply \
+if ! terraform apply \
   -var="project_id=${PROJECT_ID}" \
-  -var="region=${REGION}"
+  -var="region=${REGION}"; then
+  echo "BŁĄD: terraform apply nie powiodło się." >&2
+  exit 1
+fi
 
-# Pobranie outputów
-SA_EMAIL=$(terraform output -raw terraform_sa_email)
+# Pobranie outputów z walidacją
+SA_EMAIL=$(terraform output -raw terraform_sa_email 2>/dev/null) || true
+
+if [ -z "$SA_EMAIL" ]; then
+  echo "BŁĄD: Nie udało się pobrać terraform_sa_email z outputów." >&2
+  exit 1
+fi
 
 echo ""
 echo "=== Bootstrap zakończony ==="

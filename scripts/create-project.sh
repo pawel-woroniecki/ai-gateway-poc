@@ -10,7 +10,6 @@
 # Prefix: ai-gateway-poc/project
 #
 # Użycie:
-#   export BILLING_ACCOUNT="XXXXXX-XXXXXX-XXXXXX"
 #   ./scripts/create-project.sh
 #
 # Opcjonalnie:
@@ -21,6 +20,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
+
+# --- Sprawdzenie wymagań ---
+check_requirements() {
+  local missing=()
+  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
+  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
+    echo "Zainstaluj je przed uruchomieniem skryptu." >&2
+    exit 1
+  fi
+}
+check_requirements
 
 : "${BILLING_ACCOUNT:?Ustaw zmienną BILLING_ACCOUNT, np. export BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX}"
 
@@ -44,10 +57,13 @@ cd "$PROJECT_TF_DIR"
 
 # Init z remote backend
 echo ">>> terraform init..."
-terraform init \
+if ! terraform init \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${PROJECT_STATE_PREFIX}" \
-  -input=false
+  -input=false; then
+  echo "BŁĄD: terraform init nie powiodło się." >&2
+  exit 1
+fi
 
 # Buduj listę zmiennych
 TF_VARS=(
@@ -57,11 +73,20 @@ TF_VARS=(
 [ -n "$FOLDER_ID" ] && TF_VARS+=(-var="folder_id=${FOLDER_ID}")
 
 echo ">>> terraform apply..."
-terraform apply "${TF_VARS[@]}"
+if ! terraform apply "${TF_VARS[@]}"; then
+  echo "BŁĄD: terraform apply nie powiodło się." >&2
+  exit 1
+fi
 
-# Pobranie outputów
-NEW_PROJECT_ID=$(terraform output -raw project_id)
-NEW_SUFFIX=$(terraform output -raw suffix)
+# Pobranie outputów z walidacją
+NEW_PROJECT_ID=$(terraform output -raw project_id 2>/dev/null) || true
+NEW_SUFFIX=$(terraform output -raw suffix 2>/dev/null) || true
+
+if [ -z "$NEW_PROJECT_ID" ] || [ -z "$NEW_SUFFIX" ]; then
+  echo "BŁĄD: Nie udało się pobrać outputów Terraform (project_id, suffix)." >&2
+  echo "Sprawdź stan: terraform output" >&2
+  exit 1
+fi
 
 # Zapisz do .project-env (automatyczna detekcja w pozostałych skryptach)
 cat > "${ROOT_DIR}/.project-env" <<EOF
@@ -70,6 +95,15 @@ cat > "${ROOT_DIR}/.project-env" <<EOF
 PROJECT_ID=${NEW_PROJECT_ID}
 SUFFIX=${NEW_SUFFIX}
 EOF
+
+# Weryfikacja – czy projekt istnieje w GCP
+echo ">>> Weryfikacja projektu w GCP..."
+if gcloud projects describe "$NEW_PROJECT_ID" >/dev/null 2>&1; then
+  echo "  Projekt zweryfikowany w GCP."
+else
+  echo "UWAGA: Projekt $NEW_PROJECT_ID nie jest jeszcze widoczny w GCP." >&2
+  echo "Może to potrwać kilka sekund. Sprawdź ręcznie: gcloud projects describe $NEW_PROJECT_ID" >&2
+fi
 
 echo ""
 echo "============================================"

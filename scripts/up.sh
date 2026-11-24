@@ -12,6 +12,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
 auto_detect_project
 
+# --- Sprawdzenie wymagań ---
+check_requirements() {
+  local missing=()
+  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
+  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
+  command -v kubectl >/dev/null 2>&1   || missing+=("kubectl")
+  command -v helm >/dev/null 2>&1      || missing+=("helm")
+  command -v docker >/dev/null 2>&1    || missing+=("docker")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
+    exit 1
+  fi
+}
+check_requirements
+
 : "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
 : "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
 REGION="${REGION:-europe-central2}"
@@ -34,28 +50,41 @@ echo ""
 echo ">>> [1/5] Terraform apply – infrastruktura..."
 cd "$ROOT_DIR/terraform/environments/dev"
 
-terraform init \
+if ! terraform init \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${DEV_STATE_PREFIX}" \
-  -input=false
+  -input=false; then
+  echo "BŁĄD: terraform init nie powiodło się." >&2
+  exit 1
+fi
 
-terraform apply \
+if ! terraform apply \
   -var="project_id=${PROJECT_ID}" \
   -var="region=${REGION}" \
   -var="zone=${ZONE}" \
-  -auto-approve
+  -auto-approve; then
+  echo "BŁĄD: terraform apply nie powiodło się." >&2
+  exit 1
+fi
 
 # Pobierz outputy
-LITELLM_SA=$(terraform output -raw litellm_sa_email)
+LITELLM_SA=$(terraform output -raw litellm_sa_email 2>/dev/null) || true
+if [ -z "$LITELLM_SA" ]; then
+  echo "BŁĄD: Nie udało się pobrać litellm_sa_email z outputów Terraform." >&2
+  exit 1
+fi
 
 echo "  Infrastruktura gotowa."
 
 # --- 2. kubectl config ---
 echo ""
 echo ">>> [2/5] Konfiguracja kubectl..."
-gcloud container clusters get-credentials "$CLUSTER_NAME" \
+if ! gcloud container clusters get-credentials "$CLUSTER_NAME" \
   --zone "$ZONE" \
-  --project "$PROJECT_ID"
+  --project "$PROJECT_ID"; then
+  echo "BŁĄD: Nie udało się pobrać credentials klastra GKE." >&2
+  exit 1
+fi
 
 echo "  kubectl skonfigurowany."
 
@@ -66,14 +95,24 @@ cd "$ROOT_DIR/mock"
 
 # Build mock image i push do GCR (lub użyj local z docker build)
 # Dla PoC: budujemy lokalnie i ładujemy do klastra
-docker build -t "gcr.io/${PROJECT_ID}/mock-backend:latest" .
-docker push "gcr.io/${PROJECT_ID}/mock-backend:latest"
+if ! docker build -t "gcr.io/${PROJECT_ID}/mock-backend:latest" .; then
+  echo "BŁĄD: Docker build nie powiodło się." >&2
+  exit 1
+fi
+
+if ! docker push "gcr.io/${PROJECT_ID}/mock-backend:latest"; then
+  echo "BŁĄD: Docker push do GCR nie powiodło się." >&2
+  exit 1
+fi
 
 # Update image w manifeście i apply
 sed "s|image: mock-backend:latest|image: gcr.io/${PROJECT_ID}/mock-backend:latest|" \
   k8s.yaml | kubectl apply -f -
 
-kubectl rollout status deployment/mock-backend --timeout=120s
+if ! kubectl rollout status deployment/mock-backend --timeout=120s; then
+  echo "BŁĄD: Mock backend nie wystartował w ciągu 120s." >&2
+  exit 1
+fi
 echo "  Mock backend działa."
 
 # --- 4. Secrets dla LiteLLM ---
@@ -110,13 +149,16 @@ cd "$ROOT_DIR"
 helm repo add litellm https://berriai.github.io/litellm/ 2>/dev/null || true
 helm repo update
 
-helm upgrade --install litellm litellm/litellm-helm \
+if ! helm upgrade --install litellm litellm/litellm-helm \
   -f helm/values/litellm-dev.yaml \
   --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=${LITELLM_SA}" \
   --set "extraEnvVars[1].name=GCP_PROJECT_ID" \
   --set "extraEnvVars[1].value=${PROJECT_ID}" \
   --wait \
-  --timeout 5m
+  --timeout 5m; then
+  echo "BŁĄD: Helm install LiteLLM nie powiodło się." >&2
+  exit 1
+fi
 
 echo ""
 echo "============================================"

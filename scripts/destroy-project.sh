@@ -7,13 +7,25 @@
 # utworzyć nowy projekt bez czekania na 30-dniowe permanentne usunięcie.
 #
 # Użycie:
-#   export BILLING_ACCOUNT="XXXXXX-XXXXXX-XXXXXX"
 #   ./scripts/destroy-project.sh
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
+
+# --- Sprawdzenie wymagań ---
+check_requirements() {
+  local missing=()
+  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
+  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
+    exit 1
+  fi
+}
+check_requirements
 
 : "${BILLING_ACCOUNT:?Ustaw zmienną BILLING_ACCOUNT, np. export BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX}"
 
@@ -24,10 +36,13 @@ cd "$PROJECT_TF_DIR"
 
 # Init z remote backend
 echo ">>> terraform init..."
-terraform init \
+if ! terraform init \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${PROJECT_STATE_PREFIX}" \
-  -input=false
+  -input=false; then
+  echo "BŁĄD: terraform init nie powiodło się." >&2
+  exit 1
+fi
 
 # Sprawdź czy state zawiera projekt
 CURRENT_PROJECT=$(terraform output -raw project_id 2>/dev/null || echo "")
@@ -61,10 +76,21 @@ TF_VARS=(
 
 echo ""
 echo ">>> terraform destroy..."
-terraform destroy "${TF_VARS[@]}"
+if ! terraform destroy "${TF_VARS[@]}"; then
+  echo "BŁĄD: terraform destroy nie powiodło się." >&2
+  exit 1
+fi
 
 # Usuń .project-env
 rm -f "${ROOT_DIR}/.project-env"
+
+# Weryfikacja – czy projekt został usunięty
+echo ">>> Weryfikacja usunięcia projektu..."
+if gcloud projects describe "$CURRENT_PROJECT" >/dev/null 2>&1; then
+  echo "UWAGA: Projekt $CURRENT_PROJECT nadal widoczny w GCP – usunięcie może potrwać kilka sekund." >&2
+else
+  echo "  Projekt usunięty z GCP."
+fi
 
 echo ""
 echo "============================================"
