@@ -56,8 +56,8 @@ if ! terraform init \
 fi
 
 if ! terraform apply -auto-approve \
-  -var="project_id=${PROJECT_ID}" \
-  -var="suffix=${SUFFIX}"; then
+  -var="project_id=${PROJECT_ID}"; then
+
   echo "BŁĄD: Terraform apply nie powiodło się." >&2
   exit 1
 fi
