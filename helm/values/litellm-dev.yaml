@@ -1,6 +1,6 @@
 # ============================================================================
-# Helm values – LiteLLM Proxy dla środowiska dev
-# Chart: https://github.com/BerriAI/litellm/tree/main/deploy/charts/litellm-helm
+# Helm values – LiteLLM Proxy dla środowiska dev (PoC)
+# Chart: oci://ghcr.io/berriai/litellm-helm (v1.110.3+)
 # ============================================================================
 
 replicaCount: 1
@@ -10,25 +10,50 @@ image:
   tag: "main-latest"
   pullPolicy: IfNotPresent
 
-# --- Konfiguracja proxy ---
-masterkeySecretName: litellm-secrets
-masterkeySecretKey: master-key
+# --- Master key (PoC) ---
+masterkey: "sk-aigw-master-poc-dev"
 
-# --- Proxy config z ConfigMap ---
+# --- Log level ---
+logLevel: INFO
+
+# --- Proxy config (renderowany jako ConfigMap przez chart) ---
 proxy_config:
-  existingConfigMap: litellm-config
-  existingConfigMapKey: config.yaml
+  model_list:
+    # Mock local backend – do testów bez kluczy API
+    - model_name: "mock-local"
+      litellm_params:
+        model: "openai/mock-local"
+        api_base: "http://mock-backend:8080/v1"
+        api_key: "mock-key-not-used"
+      model_info:
+        metadata:
+          zone: "local"
+          provider: "mock"
+          description: "Mock backend lokalny – do testów"
 
-# --- Postgres (subchart) ---
+  general_settings:
+    master_key: os.environ/PROXY_MASTER_KEY
+
+  litellm_settings:
+    drop_params: true
+    set_verbose: false
+    num_retries: 2
+    request_timeout: 30
+    cache: false
+
+# --- Postgres (subchart – standalone dla PoC) ---
+db:
+  deployStandalone: true
+
 postgresql:
-  enabled: true
+  architecture: standalone
   auth:
     username: litellm
-    password: litellm-poc-password  # PoC only – w produkcji Secret
+    password: litellm-poc-password
     database: litellm
   primary:
     persistence:
-      enabled: false  # PoC – brak persistent volumes
+      enabled: false
     resources:
       requests:
         cpu: "100m"
@@ -37,21 +62,9 @@ postgresql:
         cpu: "500m"
         memory: "256Mi"
 
-# --- Redis (subchart) ---
+# --- Redis wyłączony (PoC) ---
 redis:
-  enabled: true
-  auth:
-    enabled: false  # PoC – uproszczenie
-  master:
-    persistence:
-      enabled: false
-    resources:
-      requests:
-        cpu: "50m"
-        memory: "64Mi"
-      limits:
-        cpu: "200m"
-        memory: "128Mi"
+  enabled: false
 
 # --- Resources ---
 resources:
@@ -72,25 +85,14 @@ serviceAccount:
   create: true
   name: litellm
   annotations: {}
-  # Zostanie nadpisane w skrypcie up.sh:
-  # iam.gke.io/gcp-service-account: ai-gateway-litellm@PROJECT_ID.iam.gserviceaccount.com
 
-# --- Health checks ---
+# --- Probes ---
 livenessProbe:
-  httpGet:
-    path: /health/liveliness
-    port: 4000
+  path: /health/liveliness
   initialDelaySeconds: 30
   periodSeconds: 15
 
 readinessProbe:
-  httpGet:
-    path: /health/readiness
-    port: 4000
+  path: /health/readiness
   initialDelaySeconds: 10
   periodSeconds: 10
-
-# --- Env vars dodatkowe ---
-extraEnvVars:
-  - name: LITELLM_LOG
-    value: "INFO"

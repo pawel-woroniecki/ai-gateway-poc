@@ -22,55 +22,50 @@ check_requirements() {
   command -v docker >/dev/null 2>&1    || missing+=("docker")
 
   if [ ${#missing[@]} -gt 0 ]; then
-    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
+    echo "BŁĄD: Brakuje wymaganych narzędzi: ${missing[*]}" >&2
     exit 1
   fi
 }
+
 check_requirements
 
-: "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
-: "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
-REGION="${REGION:-europe-central2}"
-ZONE="${ZONE:-europe-central2-a}"
-CLUSTER_NAME="${CLUSTER_NAME:-ai-gateway-cluster}"
-
-DEV_STATE_PREFIX="ai-gateway-poc-${SUFFIX}/dev"
+if [ -z "${PROJECT_ID:-}" ]; then
+  echo "BŁĄD: PROJECT_ID nie jest ustawione. Uruchom najpierw create-project.sh" >&2
+  exit 1
+fi
+if [ -z "${SUFFIX:-}" ]; then
+  echo "BŁĄD: SUFFIX nie jest ustawiony. Sprawdź plik .project-env" >&2
+  exit 1
+fi
 
 echo "============================================"
-echo " AI Gateway PoC – up.sh"
-echo " Projekt: $PROJECT_ID"
-echo " Suffix:  $SUFFIX"
-echo " Region:  $REGION"
-echo " Zona:    $ZONE"
-echo " State:   gs://${CENTRAL_BUCKET}/${DEV_STATE_PREFIX}/"
+echo " AI Gateway PoC – UP"
+echo " Projekt: ${PROJECT_ID}"
 echo "============================================"
 
-# --- 1. Terraform apply (infrastruktura) ---
+# --- 1. Terraform infra (GKE, VPC, SA) ---
 echo ""
-echo ">>> [1/5] Terraform apply – infrastruktura..."
-cd "$ROOT_DIR/terraform/environments/dev"
+echo ">>> [1/4] Terraform apply – infrastruktura..."
+cd "${ROOT_DIR}/terraform/dev"
 
 if ! terraform init \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
-  -backend-config="prefix=${DEV_STATE_PREFIX}" \
-  -input=false; then
-  echo "BŁĄD: terraform init nie powiodło się." >&2
+  -backend-config="prefix=ai-gateway-poc-${SUFFIX}/dev"; then
+  echo "BŁĄD: Terraform init nie powiodło się." >&2
   exit 1
 fi
 
-if ! terraform apply \
+if ! terraform apply -auto-approve \
   -var="project_id=${PROJECT_ID}" \
-  -var="region=${REGION}" \
-  -var="zone=${ZONE}" \
-  -auto-approve; then
-  echo "BŁĄD: terraform apply nie powiodło się." >&2
+  -var="suffix=${SUFFIX}"; then
+  echo "BŁĄD: Terraform apply nie powiodło się." >&2
   exit 1
 fi
 
-# Pobierz outputy
-LITELLM_SA=$(terraform output -raw litellm_sa_email 2>/dev/null) || true
+# Pobranie outputów
+LITELLM_SA=$(terraform output -raw litellm_sa_email 2>/dev/null)
 if [ -z "$LITELLM_SA" ]; then
-  echo "BŁĄD: Nie udało się pobrać litellm_sa_email z outputów Terraform." >&2
+  echo "BŁĄD: Nie udało się pobrać litellm_sa_email z Terraform." >&2
   exit 1
 fi
 
@@ -78,23 +73,23 @@ echo "  Infrastruktura gotowa."
 
 # --- 2. kubectl config ---
 echo ""
-echo ">>> [2/5] Konfiguracja kubectl..."
+echo ">>> [2/4] Konfiguracja kubectl..."
+CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null)
+CLUSTER_LOCATION=$(terraform output -raw cluster_location 2>/dev/null)
+
 if ! gcloud container clusters get-credentials "$CLUSTER_NAME" \
-  --zone "$ZONE" \
+  --zone "$CLUSTER_LOCATION" \
   --project "$PROJECT_ID"; then
-  echo "BŁĄD: Nie udało się pobrać credentials klastra GKE." >&2
+  echo "BŁĄD: Nie udało się skonfigurować kubectl." >&2
   exit 1
 fi
-
 echo "  kubectl skonfigurowany."
 
 # --- 3. Mock backend ---
 echo ""
-echo ">>> [3/5] Deploy mock backend..."
+echo ">>> [3/4] Deploy mock backend..."
 cd "$ROOT_DIR/mock"
 
-# Build mock image i push do GCR (lub użyj local z docker build)
-# Dla PoC: budujemy lokalnie i ładujemy do klastra
 if ! docker build -t "gcr.io/${PROJECT_ID}/mock-backend:latest" .; then
   echo "BŁĄD: Docker build nie powiodło się." >&2
   exit 1
@@ -105,7 +100,6 @@ if ! docker push "gcr.io/${PROJECT_ID}/mock-backend:latest"; then
   exit 1
 fi
 
-# Update image w manifeście i apply
 sed "s|image: mock-backend:latest|image: gcr.io/${PROJECT_ID}/mock-backend:latest|" \
   k8s.yaml | kubectl apply -f -
 
@@ -115,41 +109,14 @@ if ! kubectl rollout status deployment/mock-backend --timeout=120s; then
 fi
 echo "  Mock backend działa."
 
-# --- 4. Secrets dla LiteLLM ---
+# --- 4. Helm install LiteLLM ---
 echo ""
-echo ">>> [4/5] Tworzenie secrets..."
-
-LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-sk-aigw-master-$(openssl rand -hex 8)}"
-ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-
-kubectl create secret generic litellm-secrets \
-  --from-literal=master-key="$LITELLM_MASTER_KEY" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl create secret generic litellm-env \
-  --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  --from-literal=LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-}" \
-  --from-literal=LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-}" \
-  --from-literal=LANGFUSE_HOST="${LANGFUSE_HOST:-http://langfuse:3000}" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# ConfigMap z konfiguracja LiteLLM
-kubectl create configmap litellm-config \
-  --from-file=config.yaml="$ROOT_DIR/config/litellm/config.yaml" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-echo "  Secrets i ConfigMap utworzone."
-
-# --- 5. Helm install LiteLLM ---
-echo ""
-echo ">>> [5/5] Helm install – LiteLLM..."
+echo ">>> [4/4] Helm install – LiteLLM..."
 cd "$ROOT_DIR"
 
 if ! helm upgrade --install litellm oci://ghcr.io/berriai/litellm-helm \
   -f helm/values/litellm-dev.yaml \
   --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=${LITELLM_SA}" \
-  --set "extraEnvVars[1].name=GCP_PROJECT_ID" \
-  --set "extraEnvVars[1].value=${PROJECT_ID}" \
   --wait \
   --timeout 5m; then
   echo "BŁĄD: Helm install LiteLLM nie powiodło się." >&2
@@ -161,7 +128,7 @@ echo "============================================"
 echo " AI Gateway PoC – GOTOWE"
 echo "============================================"
 echo ""
-echo " LiteLLM Master Key: $LITELLM_MASTER_KEY"
+echo " Master Key: sk-aigw-master-poc-dev"
 echo ""
 echo " Port-forward do LiteLLM:"
 echo "   kubectl port-forward svc/litellm 4000:4000"
@@ -169,6 +136,8 @@ echo ""
 echo " Test:"
 echo "   curl http://localhost:4000/health/liveliness"
 echo ""
-echo " Szacowany koszt sesji: ~\$0.50"
-echo " Pamiętaj: down.sh po zakończeniu testów!"
-echo "============================================"
+echo " Test mock modelu:"
+echo "   curl http://localhost:4000/v1/chat/completions \\"
+echo "     -H 'Authorization: Bearer sk-aigw-master-poc-dev' \\"
+echo "     -H 'Content-Type: application/json' \\"
+echo "     -d '{\"model\": \"mock-local\", \"messages\": [{\"role\": \"user\", \"content\": \"test\"}]}'"
