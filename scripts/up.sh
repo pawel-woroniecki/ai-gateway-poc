@@ -46,7 +46,7 @@ echo "============================================"
 # --- 1. Terraform infra (GKE, VPC, SA) ---
 echo ""
 echo ">>> [1/4] Terraform apply – infrastruktura..."
-cd "${ROOT_DIR}/terraform/dev"
+cd "${ROOT_DIR}/terraform/environments/dev"
 
 if ! terraform init \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
