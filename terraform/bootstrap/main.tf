@@ -1,11 +1,13 @@
 # ============================================================================
 # AI Gateway PoC – Bootstrap
-# Tworzy zasoby wymagane PRZED pierwszym `terraform init` w environments/dev:
-#   - GCS bucket na Terraform state
+# Tworzy zasoby wymagane PRZED pierwszym `terraform apply` w environments/dev:
 #   - Service account dla Terraform
 #   - Włączenie wymaganych API
 #
-# Uruchamiany raz, ręcznie: cd bootstrap && terraform init && terraform apply
+# State w centralnym buckecie GCS: reinventor-terraform-states
+# Prefix: ai-gateway-poc-{suffix}/bootstrap
+#
+# Uruchomienie: ./scripts/bootstrap.sh
 # ============================================================================
 
 terraform {
@@ -18,7 +20,9 @@ terraform {
     }
   }
 
-  # Bootstrap trzyma state lokalnie – jedyny wyjątek od reguły GCS backend
+  backend "gcs" {
+    # bucket i prefix ustawiane przez -backend-config w bootstrap.sh
+  }
 }
 
 variable "project_id" {
@@ -30,16 +34,6 @@ variable "region" {
   description = "GCP region"
   type        = string
   default     = "europe-central2"
-}
-
-variable "state_bucket_name" {
-  description = "Nazwa bucketu GCS na Terraform state"
-  type        = string
-  default     = ""
-}
-
-locals {
-  state_bucket = var.state_bucket_name != "" ? var.state_bucket_name : "${var.project_id}-tf-state"
 }
 
 provider "google" {
@@ -62,31 +56,6 @@ resource "google_project_service" "apis" {
   project            = var.project_id
   service            = each.value
   disable_on_destroy = false
-}
-
-# --- GCS bucket na Terraform state ---
-
-resource "google_storage_bucket" "tf_state" {
-  name     = local.state_bucket
-  location = var.region
-  project  = var.project_id
-
-  versioning {
-    enabled = true
-  }
-
-  uniform_bucket_level_access = true
-
-  lifecycle {
-    prevent_destroy = true
-  }
-
-  labels = {
-    purpose = "terraform-state"
-    project = "ai-gateway-poc"
-  }
-
-  depends_on = [google_project_service.apis["cloudresourcemanager.googleapis.com"]]
 }
 
 # --- Service Account dla Terraform / GKE ---
@@ -116,11 +85,6 @@ resource "google_project_iam_member" "terraform_roles" {
 }
 
 # --- Outputs ---
-
-output "state_bucket" {
-  value       = google_storage_bucket.tf_state.name
-  description = "Nazwa bucketu GCS – użyj w backend {} environments/dev"
-}
 
 output "terraform_sa_email" {
   value       = google_service_account.terraform.email

@@ -3,11 +3,12 @@
 # UWAGA: terraform.tfvars jest w .gitignore – nie commituj!
 # ============================================================================
 
-project_id          = "my-gcp-project-id"
+# Project ID – ustawiany automatycznie jeśli użyjesz create-project.sh
+# Można też ustawić ręcznie:
+project_id          = "reinventor-ai-gateway-poc-xxxx"
 region              = "europe-central2"
 zone                = "europe-central2-a"
-state_bucket        = "my-gcp-project-id-tfstate"
-terraform_sa_email  = "ai-gateway-terraform@my-gcp-project-id.iam.gserviceaccount.com"
+terraform_sa_email  = "ai-gateway-terraform@reinventor-ai-gateway-poc-xxxx.iam.gserviceaccount.com"
 
 # Opcjonalne – domyślne wartości zwykle wystarczą dla PoC
 # network_name  = "ai-gateway-vpc"

@@ -24,6 +24,7 @@ service-account-*.json
 # Environment
 .env
 .env.*
+.project-env
 
 # IDE
 .vscode/

@@ -2,19 +2,27 @@
 # ============================================================================
 # down.sh – Usuwanie środowiska AI Gateway PoC
 # Kolejność odwrotna: Helm → K8s resources → Terraform destroy
+#
+# State w centralnym buckecie GCS: reinventor-terraform-states
+# Prefix: ai-gateway-poc-{suffix}/dev
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+source "${SCRIPT_DIR}/_config.sh"
+auto_detect_project
 
-: "${PROJECT_ID:?Ustaw zmienną PROJECT_ID}"
+: "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
+: "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
 REGION="${REGION:-europe-central2}"
 ZONE="${ZONE:-europe-central2-a}"
+
+DEV_STATE_PREFIX="ai-gateway-poc-${SUFFIX}/dev"
 
 echo "============================================"
 echo " AI Gateway PoC – down.sh"
 echo " Projekt: $PROJECT_ID"
+echo " State:   gs://${CENTRAL_BUCKET}/${DEV_STATE_PREFIX}/"
 echo " UWAGA: To usunie wszystkie zasoby!"
 echo "============================================"
 echo ""
@@ -45,19 +53,18 @@ gcloud container images delete "gcr.io/${PROJECT_ID}/mock-backend:latest" \
 # --- 4. Terraform destroy ---
 echo ""
 echo ">>> [4/4] Terraform destroy – infrastruktura..."
-STATE_BUCKET="${PROJECT_ID}-tfstate"
 
 cd "$ROOT_DIR/terraform/environments/dev"
 
 terraform init \
-  -backend-config="bucket=${STATE_BUCKET}" \
-  -backend-config="prefix=ai-gateway/dev"
+  -backend-config="bucket=${CENTRAL_BUCKET}" \
+  -backend-config="prefix=${DEV_STATE_PREFIX}" \
+  -input=false
 
 terraform destroy \
   -var="project_id=${PROJECT_ID}" \
   -var="region=${REGION}" \
   -var="zone=${ZONE}" \
-  -var="state_bucket=${STATE_BUCKET}" \
   -auto-approve
 
 echo ""
@@ -65,7 +72,6 @@ echo "============================================"
 echo " AI Gateway PoC – USUNIĘTE"
 echo "============================================"
 echo ""
-echo " Terraform state bucket ($STATE_BUCKET) pozostał"
-echo " – usuń ręcznie jeśli nie potrzebujesz:"
-echo "   gsutil rm -r gs://${STATE_BUCKET}"
+echo " Aby usunąć również cały projekt GCP:"
+echo "   ./scripts/destroy-project.sh"
 echo "============================================"

@@ -2,42 +2,47 @@
 # ============================================================================
 # up.sh – Stawianie środowiska AI Gateway PoC
 # Kolejność: Terraform infra → kubectl config → mock backend → Helm release
+#
+# State w centralnym buckecie GCS: reinventor-terraform-states
+# Prefix: ai-gateway-poc-{suffix}/dev
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+source "${SCRIPT_DIR}/_config.sh"
+auto_detect_project
 
-# --- Wymagane zmienne ---
-: "${PROJECT_ID:?Ustaw zmienną PROJECT_ID}"
+: "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
+: "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
 REGION="${REGION:-europe-central2}"
 ZONE="${ZONE:-europe-central2-a}"
 CLUSTER_NAME="${CLUSTER_NAME:-ai-gateway-cluster}"
 
+DEV_STATE_PREFIX="ai-gateway-poc-${SUFFIX}/dev"
+
 echo "============================================"
 echo " AI Gateway PoC – up.sh"
 echo " Projekt: $PROJECT_ID"
+echo " Suffix:  $SUFFIX"
 echo " Region:  $REGION"
 echo " Zona:    $ZONE"
+echo " State:   gs://${CENTRAL_BUCKET}/${DEV_STATE_PREFIX}/"
 echo "============================================"
 
-# --- 1. Terraform state bucket (z bootstrap) ---
-STATE_BUCKET="${PROJECT_ID}-tfstate"
-
-# --- 2. Terraform apply (infrastruktura) ---
+# --- 1. Terraform apply (infrastruktura) ---
 echo ""
 echo ">>> [1/5] Terraform apply – infrastruktura..."
 cd "$ROOT_DIR/terraform/environments/dev"
 
 terraform init \
-  -backend-config="bucket=${STATE_BUCKET}" \
-  -backend-config="prefix=ai-gateway/dev"
+  -backend-config="bucket=${CENTRAL_BUCKET}" \
+  -backend-config="prefix=${DEV_STATE_PREFIX}" \
+  -input=false
 
 terraform apply \
   -var="project_id=${PROJECT_ID}" \
   -var="region=${REGION}" \
   -var="zone=${ZONE}" \
-  -var="state_bucket=${STATE_BUCKET}" \
   -auto-approve
 
 # Pobierz outputy
@@ -45,7 +50,7 @@ LITELLM_SA=$(terraform output -raw litellm_sa_email)
 
 echo "  Infrastruktura gotowa."
 
-# --- 3. kubectl config ---
+# --- 2. kubectl config ---
 echo ""
 echo ">>> [2/5] Konfiguracja kubectl..."
 gcloud container clusters get-credentials "$CLUSTER_NAME" \
@@ -54,7 +59,7 @@ gcloud container clusters get-credentials "$CLUSTER_NAME" \
 
 echo "  kubectl skonfigurowany."
 
-# --- 4. Mock backend ---
+# --- 3. Mock backend ---
 echo ""
 echo ">>> [3/5] Deploy mock backend..."
 cd "$ROOT_DIR/mock"
@@ -71,7 +76,7 @@ sed "s|image: mock-backend:latest|image: gcr.io/${PROJECT_ID}/mock-backend:lates
 kubectl rollout status deployment/mock-backend --timeout=120s
 echo "  Mock backend działa."
 
-# --- 5. Secrets dla LiteLLM ---
+# --- 4. Secrets dla LiteLLM ---
 echo ""
 echo ">>> [4/5] Tworzenie secrets..."
 
@@ -96,7 +101,7 @@ kubectl create configmap litellm-config \
 
 echo "  Secrets i ConfigMap utworzone."
 
-# --- 6. Helm install LiteLLM ---
+# --- 5. Helm install LiteLLM ---
 echo ""
 echo ">>> [5/5] Helm install – LiteLLM..."
 cd "$ROOT_DIR"

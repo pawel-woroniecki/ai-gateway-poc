@@ -14,7 +14,9 @@ terraform {
   }
 
   backend "gcs" {
-    # bucket i prefix ustawiane przez -backend-config w skrypcie up.sh
+    # bucket i prefix ustawiane przez -backend-config w up.sh / down.sh
+    # Bucket: reinventor-terraform-states
+    # Prefix: ai-gateway-poc-{suffix}/dev
   }
 }
 

@@ -43,10 +43,6 @@ variable "node_count" {
   default     = 1
 }
 
-variable "state_bucket" {
-  description = "Nazwa bucketa GCS dla Terraform state (z bootstrap)"
-  type        = string
-}
 
 variable "terraform_sa_email" {
   description = "Email SA Terraform (z bootstrap)"
