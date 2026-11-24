@@ -14,7 +14,8 @@ image:
 masterkey: "sk-aigw-master-poc-dev"
 
 # --- Log level ---
-logLevel: INFO
+# UWAGA: logLevel celowo pominięty – chart v1.110.3 ma bug (duplikuje
+# LITELLM_LOG env var gdy logLevel jest ustawiony). Domyślnie = INFO.
 
 # --- Proxy config (renderowany jako ConfigMap przez chart) ---
 proxy_config:
