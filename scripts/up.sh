@@ -128,7 +128,7 @@ fi
 # --- 5. Port-forward (opcjonalny) ---
 echo ""
 echo ">>> [5/5] Port-forward do LiteLLM..."
-start_port_forward "svc/litellm" 4000
+start_port_forward "litellm" 4000
 
 echo ""
 echo "============================================"

@@ -105,20 +105,27 @@ find_free_port() {
 }
 
 # --- Uruchomienie port-forward na wolnym porcie ---
-# Użycie: start_port_forward "svc/litellm" 4000
+# Użycie: start_port_forward "litellm" 4000
+# Pierwszy argument: nazwa deploymentu (bez prefixu deploy/).
 # Ustawia zmienną PF_PORT na wybrany port i uruchamia port-forward w tle.
 start_port_forward() {
-  local service="$1"
+  local deploy_name="$1"
   local target_port="${2:-4000}"
   local base_port="${3:-$target_port}"
 
-  # Ubij istniejące port-forwardy do tego samego service
-  pkill -f "port-forward ${service}" 2>/dev/null || true
+  # Ubij istniejące port-forwardy
+  pkill -f "port-forward" 2>/dev/null || true
   sleep 1
 
+  # Czekaj aż deployment będzie gotowy (max 120s)
+  echo "  Czekam na deployment/${deploy_name}..."
+  if ! kubectl rollout status "deploy/${deploy_name}" --timeout=120s; then
+    echo "OSTRZEŻENIE: Deployment nie gotowy, port-forward może nie działać." >&2
+  fi
+
   PF_PORT=$(find_free_port "$base_port")
-  echo "  Port-forward: localhost:${PF_PORT} → ${service}:${target_port}"
-  kubectl port-forward "$service" "${PF_PORT}:${target_port}" &
+  echo "  Port-forward: localhost:${PF_PORT} → deploy/${deploy_name}:${target_port}"
+  kubectl port-forward "deploy/${deploy_name}" "${PF_PORT}:${target_port}" &
   PF_PID=$!
   sleep 2
 
