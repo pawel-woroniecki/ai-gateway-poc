@@ -22,6 +22,8 @@ masterkey: "sk-aigw-master-poc-dev"
 # --- UI credentials (wymagane od nowszych wersji LiteLLM) ---
 envVars:
   UI_USERNAME: admin
+  # Wymagane do auto-migracji Prisma przy starcie poda
+  DATABASE_URL: "postgresql://litellm:litellm-poc-password@litellm-postgresql:5432/litellm"
   UI_PASSWORD: sk-aigw-master-poc-dev
 
 # --- Log level ---
@@ -90,6 +92,8 @@ resources:
     memory: "4Gi"
 
 # --- Service ---
+# LoadBalancer zamiast ClusterIP – Cloud Shell Web Preview stripuje
+# nagłówki Set-Cookie, co uniemożliwia logowanie do UI.
 service:
   type: LoadBalancer
   port: 4000

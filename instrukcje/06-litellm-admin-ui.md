@@ -8,28 +8,29 @@ kluczami API, użytkownikami i monitorowania ruchu przez przeglądarkę.
 ## Wymagania wstępne
 
 - Środowisko uruchomione ([03-deploy-srodowiska.md](03-deploy-srodowiska.md))
-- Port-forward do LiteLLM aktywny
 
-## Uruchomienie port-forward
+## Dostęp do UI
 
-Skrypt `up.sh` uruchamia port-forward automatycznie. Jeśli trzeba
-uruchomić ręcznie:
+LiteLLM jest wystawiony jako **Service type LoadBalancer** z zewnętrznym
+adresem IP. Skrypt `up.sh` wyświetla adres po deployu.
+
+Ręczne sprawdzenie adresu:
 
 ```bash
-# Użyj deploy/ zamiast svc/ – svc/ może trafić na pod migracji
-kubectl rollout status deploy/litellm --timeout=120s
-kubectl port-forward deploy/litellm 4000:4000 &
+kubectl get svc litellm -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ```
 
-## Dostęp przez Cloud Shell Web Preview
+Otwórz w przeglądarce:
 
-1. W Cloud Shell kliknij ikonę **Web Preview** (prawy górny róg)
-2. Wybierz **Change port** → wpisz `4000` (lub port podany przez `up.sh`)
-   → **Change and Preview**
-3. Przeglądarka otworzy URL w formacie:
-   `https://4000-cs-XXXXX.cs-europe-west1-XXXX.cloudshell.dev/ui`
+```
+http://EXTERNAL-IP:4000/ui
+```
 
-> Jeśli otworzy się strona główna LiteLLM (nie UI), dodaj `/ui` na końcu URL.
+> **Dlaczego LoadBalancer zamiast Cloud Shell Web Preview?**
+> Cloud Shell Web Preview działa jako reverse proxy, który stripuje
+> nagłówki `Set-Cookie` z odpowiedzi HTTP. To uniemożliwia logowanie
+> do UI, ponieważ przeglądarka nie otrzymuje tokena sesji.
+> LoadBalancer daje bezpośrednie połączenie z LiteLLM bez proxy.
 
 ## Logowanie
 
@@ -55,6 +56,8 @@ LiteLLM ma kilka endpointów logowania – ważne jest użycie właściwego:
 
 ## Weryfikacja logowania przez curl
 
+Z Cloud Shell (port-forward lub external IP):
+
 ```bash
 # Poprawny test – /v2/login z JSON
 curl -s -X POST http://localhost:4000/v2/login \
@@ -72,16 +75,27 @@ Poprawna odpowiedź:
 }
 ```
 
-Alternatywnie, test przez form data:
+## Migracje bazy danych
+
+LiteLLM wymaga tabel w PostgreSQL (Prisma ORM). Helm chart uruchamia
+migrations job jako pre-install hook, ale może on failować gdy PostgreSQL
+jeszcze nie jest gotowy.
+
+Skrypt `up.sh` automatycznie sprawdza i naprawia brakujące tabele
+po deployu. Jeśli trzeba uruchomić migracje ręcznie:
 
 ```bash
-# /login z form data
-curl -s -X POST http://localhost:4000/login \
-  -d "username=admin&password=sk-aigw-master-poc-dev" \
-  -v 2>&1 | grep "HTTP/1.1\|location:"
+kubectl exec deploy/litellm -- sh -c '
+  export DATABASE_URL="postgresql://litellm:litellm-poc-password@litellm-postgresql:5432/litellm"
+  export DIRECT_URL="$DATABASE_URL"
+  prisma db push --schema=/app/schema.prisma --accept-data-loss
+'
+kubectl rollout restart deployment litellm
 ```
 
-Poprawna odpowiedź: `HTTP/1.1 303 See Other` z `location: .../ui?login=success`.
+> `DATABASE_URL` jest też ustawione w `envVars` w Helm values, ale
+> `prisma db push` wymaga go jako zmiennej środowiskowej (nie tylko
+> w konfiguracji LiteLLM).
 
 ## Scenariusz B: baza ma już użytkowników
 
@@ -94,11 +108,10 @@ Objawy: po wpisaniu kredencjali ekran logowania wraca do początku
 
 ### Rozwiązanie: stworzenie użytkownika przez API
 
-1. Upewnij się, że port-forward działa
-2. Stwórz użytkownika:
+1. Stwórz użytkownika:
 
 ```bash
-curl -s -X POST http://localhost:4000/user/new \
+curl -s -X POST http://EXTERNAL-IP:4000/user/new \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer sk-aigw-master-poc-dev' \
   -d '{
@@ -108,25 +121,25 @@ curl -s -X POST http://localhost:4000/user/new \
   }' | python3 -m json.tool
 ```
 
-3. Ustaw hasło (min. 12 znaków, wielka litera, znak specjalny):
+2. Ustaw hasło (min. 12 znaków, wielka litera, znak specjalny):
 
 ```bash
-curl -s -X POST http://localhost:4000/user/update \
+curl -s -X POST http://EXTERNAL-IP:4000/user/update \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer sk-aigw-master-poc-dev' \
   -d '{
-    "user_id": "<USER_ID_Z_KROKU_2>",
+    "user_id": "<USER_ID_Z_KROKU_1>",
     "password": "Admin123poc!"
   }' | python3 -m json.tool
 ```
 
-4. Zaloguj się:
+3. Zaloguj się:
    - **Username**: `admin@poc.local`
    - **Password**: `Admin123poc!`
 
 ### Alternatywa: reset bazy PostgreSQL
 
-Dla PoC można po prostu usunąć pod PostgreSQL (baza używa emptyDir,
+Dla PoC można usunąć pod PostgreSQL (baza używa emptyDir,
 dane nie przetrwają restartu):
 
 ```bash
@@ -139,7 +152,7 @@ Po restarcie wracamy do logowania z env vars.
 ## Sprawdzenie env vars w podzie
 
 ```bash
-kubectl exec deploy/litellm -- env | grep -E "UI_|MASTER"
+kubectl exec deploy/litellm -- env | grep -E "UI_|MASTER|DATABASE"
 ```
 
 Oczekiwany wynik:
@@ -148,15 +161,17 @@ Oczekiwany wynik:
 UI_PASSWORD=sk-aigw-master-poc-dev
 PROXY_MASTER_KEY=sk-aigw-master-poc-dev
 UI_USERNAME=admin
+DATABASE_URL=postgresql://litellm:litellm-poc-password@litellm-postgresql:5432/litellm
 ```
 
 ## Rozwiązywanie problemów
 
 | Problem | Przyczyna | Rozwiązanie |
 |---------|-----------|-------------|
-| Port 4000 zajęty | Stary port-forward w tle | `pkill -f "port-forward"` |
+| "table does not exist" | Migracje Prisma nie przeszły | Sekcja "Migracje bazy danych" powyżej |
 | curl 401 na `/login` z JSON | Zły Content-Type | Użyj `/v2/login` z JSON lub `/login` z form data |
 | "Loading..." → powrót do loginu | Env-based auth wyłączony | Scenariusz B powyżej |
-| "Internal server error" | Brak tabel w bazie | `kubectl rollout restart deployment litellm` |
+| "Internal server error" | Brak tabel w bazie | Uruchom `prisma db push` (sekcja migracje) |
 | "User has no password set" | User w bazie bez hasła | Ustaw hasło przez `/user/update` |
-| Port-forward trafia na pod migracji | Użyto `svc/litellm` | Użyj `deploy/litellm` zamiast `svc/litellm` |
+| Cloud Shell Web Preview: login loop | Proxy stripuje Set-Cookie | Używaj LoadBalancer IP bezpośrednio |
+| `<pending>` zamiast External IP | GKE provisionuje LB | Poczekaj 1-2 min, sprawdź `kubectl get svc litellm` |
