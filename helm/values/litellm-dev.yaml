@@ -91,7 +91,7 @@ resources:
 
 # --- Service ---
 service:
-  type: ClusterIP
+  type: LoadBalancer
   port: 4000
 
 # --- ServiceAccount z Workload Identity ---
