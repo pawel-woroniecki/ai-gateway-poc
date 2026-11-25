@@ -12,35 +12,82 @@ kluczami API, użytkownikami i monitorowania ruchu przez przeglądarkę.
 
 ## Uruchomienie port-forward
 
+Skrypt `up.sh` uruchamia port-forward automatycznie. Jeśli trzeba
+uruchomić ręcznie:
+
 ```bash
-kubectl port-forward svc/litellm 4000:4000
+# Użyj deploy/ zamiast svc/ – svc/ może trafić na pod migracji
+kubectl rollout status deploy/litellm --timeout=120s
+kubectl port-forward deploy/litellm 4000:4000 &
 ```
 
 ## Dostęp przez Cloud Shell Web Preview
 
 1. W Cloud Shell kliknij ikonę **Web Preview** (prawy górny róg)
-2. Wybierz **Change port** → wpisz `4000` → **Change and Preview**
+2. Wybierz **Change port** → wpisz `4000` (lub port podany przez `up.sh`)
+   → **Change and Preview**
 3. Przeglądarka otworzy URL w formacie:
    `https://4000-cs-XXXXX.cs-europe-west1-XXXX.cloudshell.dev/ui`
 
 > Jeśli otworzy się strona główna LiteLLM (nie UI), dodaj `/ui` na końcu URL.
 
-## Logowanie – scenariusz A: świeży deploy
+## Logowanie
 
-Na świeżej bazie PostgreSQL (pierwszy deploy lub po resecie bazy)
-LiteLLM akceptuje kredencjale z env vars:
+Credentials ustawione w `helm/values/litellm-dev.yaml`:
 
 - **Username**: `admin`
 - **Password**: `sk-aigw-master-poc-dev`
 
-Te wartości pochodzą z `envVars.UI_USERNAME` i `envVars.UI_PASSWORD`
-w `helm/values/litellm-dev.yaml`.
+Te wartości pochodzą z `envVars.UI_USERNAME` i `envVars.UI_PASSWORD`.
 
-## Logowanie – scenariusz B: baza ma już użytkowników
+## Endpointy logowania (wersja 1.112+)
+
+LiteLLM ma kilka endpointów logowania – ważne jest użycie właściwego:
+
+| Endpoint | Content-Type | Opis |
+|----------|-------------|------|
+| `/v2/login` | `application/json` | **Główny** – używany przez UI, zwraca JSON z tokenem JWT |
+| `/login` | `application/x-www-form-urlencoded` | Helper dla SSO, oczekuje form data (nie JSON!) |
+| `/auth/login` | `application/json` | Tylko gdy `is_control_plane: true` (domyślnie wyłączony) |
+
+> **Uwaga**: wysłanie JSON do `/login` zwróci 401 – to NIE oznacza
+> złych kredencjali, tylko zły Content-Type.
+
+## Weryfikacja logowania przez curl
+
+```bash
+# Poprawny test – /v2/login z JSON
+curl -s -X POST http://localhost:4000/v2/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"sk-aigw-master-poc-dev"}' \
+  | python3 -m json.tool
+```
+
+Poprawna odpowiedź:
+
+```json
+{
+    "redirect_url": "http://localhost:4000/ui?login=success",
+    "token": "eyJhbG..."
+}
+```
+
+Alternatywnie, test przez form data:
+
+```bash
+# /login z form data
+curl -s -X POST http://localhost:4000/login \
+  -d "username=admin&password=sk-aigw-master-poc-dev" \
+  -v 2>&1 | grep "HTTP/1.1\|location:"
+```
+
+Poprawna odpowiedź: `HTTP/1.1 303 See Other` z `location: .../ui?login=success`.
+
+## Scenariusz B: baza ma już użytkowników
 
 Po kilku `helm upgrade` LiteLLM może automatycznie stworzyć użytkownika
 w bazie PostgreSQL. Od tego momentu env-based login (`UI_USERNAME`/`UI_PASSWORD`)
-jest ignorowany – akceptowani są tylko użytkownicy z bazy.
+może być ignorowany – akceptowani są tylko użytkownicy z bazy.
 
 Objawy: po wpisaniu kredencjali ekran logowania wraca do początku
 (bez komunikatu o błędzie lub z komunikatem "Invalid credentials").
@@ -87,33 +134,29 @@ kubectl delete pod litellm-postgresql-0
 kubectl rollout restart deployment litellm
 ```
 
-Po restarcie wracamy do scenariusza A (świeży deploy).
+Po restarcie wracamy do logowania z env vars.
 
-## Weryfikacja logowania przez curl
-
-Gdy UI nie działa, sprawdź backend bezpośrednio:
+## Sprawdzenie env vars w podzie
 
 ```bash
-# Test z env-based credentials
-curl -s -X POST http://localhost:4000/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"sk-aigw-master-poc-dev"}'
-
-# Test z database credentials
-curl -s -X POST http://localhost:4000/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin@poc.local","password":"Admin123poc!"}'
+kubectl exec deploy/litellm -- env | grep -E "UI_|MASTER"
 ```
 
-Poprawna odpowiedź zawiera token JWT. Odpowiedź `401` oznacza
-nieprawidłowe kredencjale.
+Oczekiwany wynik:
+
+```
+UI_PASSWORD=sk-aigw-master-poc-dev
+PROXY_MASTER_KEY=sk-aigw-master-poc-dev
+UI_USERNAME=admin
+```
 
 ## Rozwiązywanie problemów
 
 | Problem | Przyczyna | Rozwiązanie |
 |---------|-----------|-------------|
 | Port 4000 zajęty | Stary port-forward w tle | `pkill -f "port-forward"` |
+| curl 401 na `/login` z JSON | Zły Content-Type | Użyj `/v2/login` z JSON lub `/login` z form data |
 | "Loading..." → powrót do loginu | Env-based auth wyłączony | Scenariusz B powyżej |
 | "Internal server error" | Brak tabel w bazie | `kubectl rollout restart deployment litellm` |
 | "User has no password set" | User w bazie bez hasła | Ustaw hasło przez `/user/update` |
-| curl 404 na `/user/login` | Stary endpoint | Użyj `/login` (bez `/user/`) |
+| Port-forward trafia na pod migracji | Użyto `svc/litellm` | Użyj `deploy/litellm` zamiast `svc/litellm` |
