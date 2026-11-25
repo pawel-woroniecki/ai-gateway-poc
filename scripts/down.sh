@@ -57,11 +57,12 @@ kubectl delete -f "$ROOT_DIR/mock/k8s.yaml" 2>/dev/null || echo "  (mock-backend
 kubectl delete secret litellm-secrets litellm-env 2>/dev/null || true
 kubectl delete configmap litellm-config 2>/dev/null || true
 
-# --- 3. Usunięcie obrazu z GCR ---
+# --- 3. Usunięcie obrazu z Artifact Registry ---
 echo ""
-echo ">>> [3/4] Usuwanie obrazu z GCR..."
-gcloud container images delete "gcr.io/${PROJECT_ID}/mock-backend:latest" \
-  --force-delete-tags --quiet 2>/dev/null || echo "  (obraz nie znaleziony)"
+echo ">>> [3/4] Usuwanie obrazu z Artifact Registry..."
+MOCK_IMAGE="$(ar_image mock-backend):latest"
+gcloud artifacts docker images delete "$MOCK_IMAGE" \
+  --delete-tags --quiet 2>/dev/null || echo "  (obraz nie znaleziony)"
 
 # --- 4. Terraform destroy ---
 echo ""

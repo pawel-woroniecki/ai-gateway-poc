@@ -104,11 +104,12 @@ Usuwa:
 
 Każde polecenie ma `|| true` lub `|| echo "..."`, dzięki czemu brak danego zasobu nie przerywa skryptu.
 
-### 8. Etap 3/4 – Usuwanie obrazu z GCR
+### 8. Etap 3/4 – Usuwanie obrazu z Artifact Registry
 
 ```bash
-gcloud container images delete "gcr.io/${PROJECT_ID}/mock-backend:latest" \
-  --force-delete-tags --quiet 2>/dev/null || echo "  (obraz nie znaleziony)"
+MOCK_IMAGE="$(ar_image mock-backend):latest"
+gcloud artifacts docker images delete "$MOCK_IMAGE" \
+  --delete-tags --quiet 2>/dev/null || echo "  (obraz nie znaleziony)"
 ```
 
 Usuwa obraz Docker mock backendu z Google Container Registry:
@@ -176,7 +177,7 @@ Potwierdzenie użytkownika: "Kontynuować? (y/N)"
 [2/4] kubectl delete – mock backend, sekrety, configmapy
         │ (kontynuuje nawet jeśli nie znaleziono)
         ▼
-[3/4] gcloud – usunięcie obrazu z GCR
+[3/4] gcloud – usunięcie obrazu z Artifact Registry
         │ (kontynuuje nawet jeśli nie znaleziono)
         ▼
 [4/4] Terraform destroy – infrastruktura (GKE, VPC, SA)

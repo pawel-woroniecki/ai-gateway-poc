@@ -135,14 +135,17 @@ Po tym kroku `kubectl` wskazuje na nowo utworzony klaster.
 ### 8. Etap 3/4 – Deploy mock backend
 
 ```bash
-cd "$ROOT_DIR/mock"
+gcloud auth configure-docker "${AR_REGION}-docker.pkg.dev" --quiet
 
 docker pull python:3.11-alpine
 
-docker build -t "gcr.io/${PROJECT_ID}/mock-backend:latest" .
-docker push "gcr.io/${PROJECT_ID}/mock-backend:latest"
+MOCK_IMAGE="$(ar_image mock-backend):latest"
+cd "$ROOT_DIR/mock"
 
-sed "s|image: mock-backend:latest|image: gcr.io/${PROJECT_ID}/mock-backend:latest|" \
+docker build -t "$MOCK_IMAGE" .
+docker push "$MOCK_IMAGE"
+
+sed "s|image: mock-backend:latest|image: ${MOCK_IMAGE}|" \
   k8s.yaml | kubectl apply -f -
 
 kubectl rollout status deployment/mock-backend --timeout=120s
@@ -150,11 +153,12 @@ kubectl rollout status deployment/mock-backend --timeout=120s
 
 Mock backend to prosty serwer HTTP symulujący odpowiedzi LLM. Etap obejmuje:
 
-0. **docker pull python:3.11-alpine** – pobiera obraz bazowy z widocznym postępem (unika długiego oczekiwania podczas buildu)
-1. **docker build** – buduje obraz kontenera z katalogu `mock/` (używa lekkiego Alpine zamiast Debian slim)
-2. **docker push** – wysyła obraz do Google Container Registry (GCR) w projekcie
-3. **sed + kubectl apply** – modyfikuje manifest Kubernetes (`k8s.yaml`), podmieniając nazwę obrazu na pełną ścieżkę GCR, i wdraża na klaster
-4. **kubectl rollout status** – czeka aż deployment będzie gotowy (timeout 120 sekund)
+0. **gcloud auth configure-docker** – konfiguruje Docker credentials dla Artifact Registry w regionie projektu
+1. **docker pull python:3.11-alpine** – pobiera obraz bazowy z widocznym postępem (unika długiego oczekiwania podczas buildu)
+2. **docker build** – buduje obraz kontenera z katalogu `mock/` (używa lekkiego Alpine zamiast Debian slim)
+3. **docker push** – wysyła obraz do Artifact Registry w projekcie
+4. **sed + kubectl apply** – modyfikuje manifest Kubernetes (`k8s.yaml`), podmieniając nazwę obrazu na pełną ścieżkę GCR, i wdraża na klaster
+5. **kubectl rollout status** – czeka aż deployment będzie gotowy (timeout 120 sekund)
 
 ### 9. Etap 4/4 – Helm install LiteLLM
 

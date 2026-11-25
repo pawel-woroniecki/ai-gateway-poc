@@ -88,22 +88,28 @@ echo "  kubectl skonfigurowany."
 echo ""
 echo ">>> [3/4] Deploy mock backend..."
 
+# Konfiguracja Docker auth dla Artifact Registry
+echo "  Konfiguracja Docker auth dla Artifact Registry..."
+gcloud auth configure-docker "${AR_REGION}-docker.pkg.dev" --quiet
+
 # Pre-pull obrazu bazowego (widoczny postęp pobierania)
 echo "  Pobieranie obrazu bazowego python:3.11-alpine..."
 docker pull python:3.11-alpine
+
+MOCK_IMAGE="$(ar_image mock-backend):latest"
 cd "$ROOT_DIR/mock"
 
-if ! docker build -t "gcr.io/${PROJECT_ID}/mock-backend:latest" .; then
+if ! docker build -t "$MOCK_IMAGE" .; then
   echo "BŁĄD: Docker build nie powiodło się." >&2
   exit 1
 fi
 
-if ! docker push "gcr.io/${PROJECT_ID}/mock-backend:latest"; then
-  echo "BŁĄD: Docker push do GCR nie powiodło się." >&2
+if ! docker push "$MOCK_IMAGE"; then
+  echo "BŁĄD: Docker push do Artifact Registry nie powiodło się." >&2
   exit 1
 fi
 
-sed "s|image: mock-backend:latest|image: gcr.io/${PROJECT_ID}/mock-backend:latest|" \
+sed "s|image: mock-backend:latest|image: ${MOCK_IMAGE}|" \
   k8s.yaml | kubectl apply -f -
 
 if ! kubectl rollout status deployment/mock-backend --timeout=120s; then

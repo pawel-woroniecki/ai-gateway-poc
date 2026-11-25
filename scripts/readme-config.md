@@ -134,14 +134,42 @@ Dzięki temu:
 - po uruchomieniu `create-project.sh` wszystkie kolejne skrypty automatycznie wiedzą, na jakim projekcie pracują
 - podanie suffixu jako argumentu pozwala operować na **dowolnym** projekcie, niezależnie od tego, co jest w `.project-env`
 
+### AR_REGION
+
+```bash
+AR_REGION="${AR_REGION:-europe-central2}"
+```
+
+Region Artifact Registry – musi być zgodny z `var.region` w Terraform. Domyślnie `europe-central2` (Warszawa). Można nadpisać zmienną środowiskową.
+
+### Funkcja ar_image()
+
+```bash
+ar_image() {
+  local image_name="$1"
+  echo "${AR_REGION}-docker.pkg.dev/${PROJECT_ID}/ai-gateway/${image_name}"
+}
+```
+
+Buduje pełną ścieżkę obrazu Docker w Artifact Registry. Skrypty `up.sh` i `down.sh` używają jej zamiast bezpośredniego adresu – wystarczy podać nazwę obrazu:
+
+```bash
+ar_image "mock-backend"
+# → europe-central2-docker.pkg.dev/reinventor-ai-gateway-poc-abcd/ai-gateway/mock-backend
+```
+
+Repozytorium `ai-gateway` jest tworzone automatycznie przez Terraform w module dev.
+
 ## Schemat zależności
 
 ```
 _config.sh
     │
-    ├── Stałe: BILLING_ACCOUNT, PROJECT_NAME_BASE, CENTRAL_BUCKET, ...
+    ├── Stałe: BILLING_ACCOUNT, PROJECT_NAME_BASE, CENTRAL_BUCKET, AR_REGION, ...
     │
     ├── state_prefix()       ← używana przez wszystkie skrypty
+    │
+    ├── ar_image()           ← używana przez up.sh, down.sh
     │
     ├── check_requirements() ← używana przez wszystkie skrypty
     │

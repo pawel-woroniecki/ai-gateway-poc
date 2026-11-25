@@ -73,3 +73,15 @@ auto_detect_project() {
     source "${ROOT_DIR}/.project-env"
   fi
 }
+
+# Region Artifact Registry (musi zgadzać się z var.region w Terraform)
+AR_REGION="${AR_REGION:-europe-central2}"
+
+# --- Budowanie pełnej ścieżki obrazu w Artifact Registry ---
+# Użycie: ar_image "mock-backend"
+#   → europe-central2-docker.pkg.dev/reinventor-ai-gateway-poc-XXXX/ai-gateway/mock-backend
+# Wymaga ustawionego PROJECT_ID i AR_REGION.
+ar_image() {
+  local image_name="$1"
+  echo "${AR_REGION}-docker.pkg.dev/${PROJECT_ID}/ai-gateway/${image_name}"
+}
