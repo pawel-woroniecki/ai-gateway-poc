@@ -76,10 +76,26 @@ TF_VARS=(
 
 echo ""
 echo ">>> terraform destroy..."
-if ! terraform destroy "${TF_VARS[@]}"; then
-  echo "BŁĄD: terraform destroy nie powiodło się." >&2
-  exit 1
+DESTROY_EXIT=0
+terraform destroy "${TF_VARS[@]}" || DESTROY_EXIT=$?
+
+if [ $DESTROY_EXIT -ne 0 ]; then
+  echo "UWAGA: terraform destroy zwrócił kod $DESTROY_EXIT." >&2
+  echo "Projekt mógł zostać usunięty, ale zapis stanu do GCS mógł się nie powieść." >&2
+  echo "Kontynuuję czyszczenie..." >&2
 fi
+
+# Czyszczenie terraform state i lock z GCS
+echo ">>> Czyszczenie terraform state z GCS..."
+if gsutil -m rm -r "gs://${CENTRAL_BUCKET}/${PROJECT_STATE_PREFIX}/" 2>/dev/null; then
+  echo "  State usunięty z gs://${CENTRAL_BUCKET}/${PROJECT_STATE_PREFIX}/"
+else
+  echo "  Brak plików state w GCS lub już usunięte."
+fi
+
+# Czyszczenie lokalnych plików errored.tfstate (artefakt po nieudanym zapisie state)
+rm -f "${PROJECT_TF_DIR}/errored.tfstate"
+rm -f "${PROJECT_TF_DIR}/errored.tfstate.backup"
 
 # Usuń .project-env
 rm -f "${ROOT_DIR}/.project-env"

@@ -105,6 +105,10 @@ else
   echo "Może to potrwać kilka sekund. Sprawdź ręcznie: gcloud projects describe $NEW_PROJECT_ID" >&2
 fi
 
+# Przełącz kontekst gcloud na nowy projekt
+echo ">>> gcloud config set project $NEW_PROJECT_ID..."
+gcloud config set project "$NEW_PROJECT_ID"
+
 echo ""
 echo "============================================"
 echo " Projekt utworzony!"
