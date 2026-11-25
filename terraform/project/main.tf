@@ -1,14 +1,14 @@
 # ============================================================================
 # AI Gateway PoC – tworzenie projektu GCP
 #
-# Generuje unikalny project_id z losowym 4-literowym suffixem, dzięki czemu
-# można usunąć projekt i natychmiast stworzyć nowy (bez czekania na
-# permanentne usunięcie starego w GCP – 30 dni).
+# Tworzy projekt z suffixem podanym jako zmienna (generowanym przez skrypt
+# create-project.sh). Dzięki unikalnemu suffixowi można usunąć projekt
+# i natychmiast stworzyć nowy (bez czekania na 30 dni w GCP).
 #
 # Uruchomienie: ./scripts/create-project.sh
 #
 # State w centralnym buckecie GCS: reinventor-terraform-states
-# Prefix: ai-gateway-poc/project (stały – suffix jeszcze nie istnieje)
+# Prefix: ai-gateway-poc-{suffix}/project
 # ============================================================================
 
 terraform {
@@ -19,35 +19,15 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 6.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
   }
 
   backend "gcs" {
     # bucket i prefix ustawiane przez -backend-config w create-project.sh
-    # Prefix stały: ai-gateway-poc/project (suffix jeszcze nie istnieje)
-  }
-}
-
-# --- Losowy suffix ---
-
-resource "random_string" "suffix" {
-  length  = 4
-  lower   = true
-  upper   = false
-  numeric = false
-  special = false
-
-  # Wymuszenie nowego suffixu po ręcznym usunięciu projektu
-  keepers = {
-    base_name = var.project_name_base
   }
 }
 
 locals {
-  project_id = "${var.project_name_base}-${random_string.suffix.result}"
+  project_id = "${var.project_name_base}-${var.suffix}"
 }
 
 # --- Projekt GCP ---

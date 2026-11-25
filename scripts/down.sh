@@ -5,34 +5,32 @@
 #
 # State w centralnym buckecie GCS: reinventor-terraform-states
 # Prefix: ai-gateway-poc-{suffix}/dev
+#
+# Użycie:
+#   ./scripts/down.sh           # odczyt z .project-env
+#   ./scripts/down.sh abcd      # podany suffix
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
-auto_detect_project
+auto_detect_project "${1:-}"
 
-# --- Sprawdzenie wymagań ---
-check_requirements() {
-  local missing=()
-  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
-  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
-  command -v kubectl >/dev/null 2>&1   || missing+=("kubectl")
-  command -v helm >/dev/null 2>&1      || missing+=("helm")
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
+# Sprawdzenie dodatkowych wymagań
+check_requirements
+for cmd in kubectl helm; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "BŁĄD: Brak wymaganego narzędzia: $cmd" >&2
     exit 1
   fi
-}
-check_requirements
+done
 
 : "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
 : "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
 REGION="${REGION:-europe-central2}"
 ZONE="${ZONE:-europe-central2-a}"
 
-DEV_STATE_PREFIX="ai-gateway-poc-${SUFFIX}/dev"
+DEV_STATE_PREFIX=$(state_prefix "dev")
 
 echo "============================================"
 echo " AI Gateway PoC – down.sh"
@@ -71,7 +69,7 @@ echo ">>> [4/4] Terraform destroy – infrastruktura..."
 
 cd "$ROOT_DIR/terraform/environments/dev"
 
-if ! terraform init \
+if ! terraform init -reconfigure \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${DEV_STATE_PREFIX}" \
   -input=false; then

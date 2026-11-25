@@ -6,11 +6,13 @@
 # Dzięki unikalnemu suffixowi można usunąć projekt i natychmiast stworzyć
 # nowy – bez czekania na permanentne usunięcie starego (30 dni w GCP).
 #
-# State zapisywany w centralnym buckecie GCS: reinventor-terraform-states
-# Prefix: ai-gateway-poc/project
+# Suffix generowany w bashu i przekazywany do Terraform jako zmienna.
+# Każdy projekt ma niezależny state w GCS:
+#   gs://reinventor-terraform-states/ai-gateway-poc-XXXX/project
 #
 # Użycie:
-#   ./scripts/create-project.sh
+#   ./scripts/create-project.sh           # losowy suffix
+#   ./scripts/create-project.sh abcd      # podany suffix
 #
 # Opcjonalnie:
 #   export ORG_ID="123456789"       # jeśli masz organizację
@@ -20,19 +22,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
-
-# --- Sprawdzenie wymagań ---
-check_requirements() {
-  local missing=()
-  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
-  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
-    echo "Zainstaluj je przed uruchomieniem skryptu." >&2
-    exit 1
-  fi
-}
 check_requirements
 
 : "${BILLING_ACCOUNT:?Ustaw zmienną BILLING_ACCOUNT, np. export BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX}"
@@ -40,24 +29,38 @@ check_requirements
 ORG_ID="${ORG_ID:-}"
 FOLDER_ID="${FOLDER_ID:-}"
 
+# --- Generowanie suffixu ---
+if [ -n "${1:-}" ]; then
+  SUFFIX="$1"
+  if ! [[ "$SUFFIX" =~ ^[a-z]{4}$ ]]; then
+    echo "BŁĄD: Suffix musi mieć dokładnie 4 małe litery (a-z). Podano: $SUFFIX" >&2
+    exit 1
+  fi
+  echo ">>> Użycie podanego suffixu: ${SUFFIX}"
+else
+  SUFFIX=$(LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 4)
+  echo ">>> Wylosowany suffix: ${SUFFIX}"
+fi
+
+PROJECT_STATE_PREFIX=$(state_prefix "project")
+
+echo ""
 echo "============================================"
 echo " AI Gateway PoC – create-project.sh"
 echo " Billing:  $BILLING_ACCOUNT"
 [ -n "$ORG_ID" ] && echo " Org ID:   $ORG_ID"
 [ -n "$FOLDER_ID" ] && echo " Folder:   $FOLDER_ID"
+echo " Suffix:   $SUFFIX"
+echo " Projekt:  ${PROJECT_NAME_BASE}-${SUFFIX}"
 echo " State:    gs://${CENTRAL_BUCKET}/${PROJECT_STATE_PREFIX}/"
 echo "============================================"
-echo ""
-echo " Zostanie utworzony nowy projekt GCP:"
-echo "   reinventor-ai-gateway-poc-XXXX"
-echo " (XXXX = losowy suffix)"
 echo ""
 
 cd "$PROJECT_TF_DIR"
 
 # Init z remote backend
 echo ">>> terraform init..."
-if ! terraform init \
+if ! terraform init -reconfigure \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${PROJECT_STATE_PREFIX}" \
   -input=false; then
@@ -68,6 +71,7 @@ fi
 # Buduj listę zmiennych
 TF_VARS=(
   -var="billing_account=${BILLING_ACCOUNT}"
+  -var="suffix=${SUFFIX}"
 )
 [ -n "$ORG_ID" ] && TF_VARS+=(-var="org_id=${ORG_ID}")
 [ -n "$FOLDER_ID" ] && TF_VARS+=(-var="folder_id=${FOLDER_ID}")
@@ -80,10 +84,9 @@ fi
 
 # Pobranie outputów z walidacją
 NEW_PROJECT_ID=$(terraform output -raw project_id 2>/dev/null) || true
-NEW_SUFFIX=$(terraform output -raw suffix 2>/dev/null) || true
 
-if [ -z "$NEW_PROJECT_ID" ] || [ -z "$NEW_SUFFIX" ]; then
-  echo "BŁĄD: Nie udało się pobrać outputów Terraform (project_id, suffix)." >&2
+if [ -z "$NEW_PROJECT_ID" ]; then
+  echo "BŁĄD: Nie udało się pobrać outputów Terraform (project_id)." >&2
   echo "Sprawdź stan: terraform output" >&2
   exit 1
 fi
@@ -93,7 +96,7 @@ cat > "${ROOT_DIR}/.project-env" <<EOF
 # Wygenerowane automatycznie przez create-project.sh
 # $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 PROJECT_ID=${NEW_PROJECT_ID}
-SUFFIX=${NEW_SUFFIX}
+SUFFIX=${SUFFIX}
 EOF
 
 # Weryfikacja – czy projekt istnieje w GCP
@@ -115,7 +118,7 @@ echo " Projekt utworzony!"
 echo "============================================"
 echo ""
 echo " Project ID:  $NEW_PROJECT_ID"
-echo " Suffix:      $NEW_SUFFIX"
+echo " Suffix:      $SUFFIX"
 echo " State:       gs://${CENTRAL_BUCKET}/${PROJECT_STATE_PREFIX}/"
 echo ""
 echo " Plik .project-env zapisany – pozostałe skrypty"

@@ -5,29 +5,25 @@
 #
 # State w centralnym buckecie GCS: reinventor-terraform-states
 # Prefix: ai-gateway-poc-{suffix}/dev
+#
+# Użycie:
+#   ./scripts/up.sh           # odczyt z .project-env
+#   ./scripts/up.sh abcd      # podany suffix
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
-auto_detect_project
+auto_detect_project "${1:-}"
 
-# --- Sprawdzenie wymagań ---
-check_requirements() {
-  local missing=()
-  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
-  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
-  command -v kubectl >/dev/null 2>&1   || missing+=("kubectl")
-  command -v helm >/dev/null 2>&1      || missing+=("helm")
-  command -v docker >/dev/null 2>&1    || missing+=("docker")
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    echo "BŁĄD: Brakuje wymaganych narzędzi: ${missing[*]}" >&2
+# Sprawdzenie dodatkowych wymagań
+check_requirements
+for cmd in kubectl helm docker; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "BŁĄD: Brak wymaganego narzędzia: $cmd" >&2
     exit 1
   fi
-}
-
-check_requirements
+done
 
 if [ -z "${PROJECT_ID:-}" ]; then
   echo "BŁĄD: PROJECT_ID nie jest ustawione. Uruchom najpierw create-project.sh" >&2
@@ -38,9 +34,12 @@ if [ -z "${SUFFIX:-}" ]; then
   exit 1
 fi
 
+DEV_STATE_PREFIX=$(state_prefix "dev")
+
 echo "============================================"
 echo " AI Gateway PoC – UP"
 echo " Projekt: ${PROJECT_ID}"
+echo " State:   gs://${CENTRAL_BUCKET}/${DEV_STATE_PREFIX}/"
 echo "============================================"
 
 # --- 1. Terraform infra (GKE, VPC, SA) ---
@@ -48,9 +47,9 @@ echo ""
 echo ">>> [1/4] Terraform apply – infrastruktura..."
 cd "${ROOT_DIR}/terraform/environments/dev"
 
-if ! terraform init \
+if ! terraform init -reconfigure \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
-  -backend-config="prefix=ai-gateway-poc-${SUFFIX}/dev"; then
+  -backend-config="prefix=${DEV_STATE_PREFIX}"; then
   echo "BŁĄD: Terraform init nie powiodło się." >&2
   exit 1
 fi

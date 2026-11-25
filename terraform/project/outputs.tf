@@ -4,7 +4,7 @@
 
 output "project_id" {
   value       = google_project.poc.project_id
-  description = "Wygenerowany project_id (z losowym suffixem) – użyj w bootstrap i environments/dev"
+  description = "Wygenerowany project_id (z suffixem) – użyj w bootstrap i environments/dev"
 }
 
 output "project_number" {
@@ -18,6 +18,6 @@ output "project_name" {
 }
 
 output "suffix" {
-  value       = random_string.suffix.result
-  description = "Wylosowany suffix"
+  value       = var.suffix
+  description = "Suffix projektu"
 }

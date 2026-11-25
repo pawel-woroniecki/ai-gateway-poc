@@ -6,25 +6,16 @@
 # Dzięki deletion_policy="DELETE" i losowemu suffixowi można natychmiast
 # utworzyć nowy projekt bez czekania na 30-dniowe permanentne usunięcie.
 #
+# Czyści WSZYSTKIE terraform state z GCS (project, bootstrap, dev).
+#
 # Użycie:
-#   ./scripts/destroy-project.sh
+#   ./scripts/destroy-project.sh          # odczyt z .project-env
+#   ./scripts/destroy-project.sh abcd     # podany suffix
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
-
-# --- Sprawdzenie wymagań ---
-check_requirements() {
-  local missing=()
-  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
-  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
-    exit 1
-  fi
-}
 check_requirements
 
 : "${BILLING_ACCOUNT:?Ustaw zmienną BILLING_ACCOUNT, np. export BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX}"
@@ -32,11 +23,21 @@ check_requirements
 ORG_ID="${ORG_ID:-}"
 FOLDER_ID="${FOLDER_ID:-}"
 
+# Odczyt suffixu z argumentu lub .project-env
+auto_detect_project "${1:-}"
+
+if [ -z "${SUFFIX:-}" ]; then
+  echo "BŁĄD: Nie znaleziono SUFFIX. Podaj jako argument lub uruchom create-project.sh." >&2
+  exit 1
+fi
+
+PROJECT_STATE_PREFIX=$(state_prefix "project")
+
 cd "$PROJECT_TF_DIR"
 
 # Init z remote backend
 echo ">>> terraform init..."
-if ! terraform init \
+if ! terraform init -reconfigure \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${PROJECT_STATE_PREFIX}" \
   -input=false; then
@@ -49,6 +50,14 @@ CURRENT_PROJECT=$(terraform output -raw project_id 2>/dev/null || echo "")
 
 if [ -z "$CURRENT_PROJECT" ]; then
   echo "Brak projektu w remote state – nie ma czego usuwać."
+  echo "Czyszczenie state z GCS..."
+  # Mimo braku projektu, wyczyść ewentualne pozostałości state
+  for prefix in \
+    "$(state_prefix "project")" \
+    "$(state_prefix "bootstrap")" \
+    "$(state_prefix "dev")"; do
+    gsutil -m rm -r "gs://${CENTRAL_BUCKET}/${prefix}/" 2>/dev/null || true
+  done
   exit 0
 fi
 
@@ -70,6 +79,7 @@ fi
 # Buduj listę zmiennych
 TF_VARS=(
   -var="billing_account=${BILLING_ACCOUNT}"
+  -var="suffix=${SUFFIX}"
 )
 [ -n "$ORG_ID" ] && TF_VARS+=(-var="org_id=${ORG_ID}")
 [ -n "$FOLDER_ID" ] && TF_VARS+=(-var="folder_id=${FOLDER_ID}")
@@ -85,15 +95,20 @@ if [ $DESTROY_EXIT -ne 0 ]; then
   echo "Kontynuuję czyszczenie..." >&2
 fi
 
-# Czyszczenie terraform state i lock z GCS
+# Czyszczenie WSZYSTKICH terraform state i lock z GCS
 echo ">>> Czyszczenie terraform state z GCS..."
-if gsutil -m rm -r "gs://${CENTRAL_BUCKET}/${PROJECT_STATE_PREFIX}/" 2>/dev/null; then
-  echo "  State usunięty z gs://${CENTRAL_BUCKET}/${PROJECT_STATE_PREFIX}/"
-else
-  echo "  Brak plików state w GCS lub już usunięte."
-fi
+for prefix in \
+  "$(state_prefix "project")" \
+  "$(state_prefix "bootstrap")" \
+  "$(state_prefix "dev")"; do
+  if gsutil -m rm -r "gs://${CENTRAL_BUCKET}/${prefix}/" 2>/dev/null; then
+    echo "  Usunięto: gs://${CENTRAL_BUCKET}/${prefix}/"
+  else
+    echo "  Brak/już usunięte: ${prefix}"
+  fi
+done
 
-# Czyszczenie lokalnych plików errored.tfstate (artefakt po nieudanym zapisie state)
+# Czyszczenie lokalnych plików errored.tfstate
 rm -f "${PROJECT_TF_DIR}/errored.tfstate"
 rm -f "${PROJECT_TF_DIR}/errored.tfstate.backup"
 
@@ -112,6 +127,7 @@ echo ""
 echo "============================================"
 echo " Projekt $CURRENT_PROJECT usunięty."
 echo " Plik .project-env usunięty."
+echo " State GCS wyczyszczony."
 echo "============================================"
 echo ""
 echo " Aby utworzyć nowy projekt:"

@@ -2,8 +2,18 @@
 # Zmienne – tworzenie projektu GCP
 # ============================================================================
 
+variable "suffix" {
+  description = "4-literowy suffix projektu (generowany przez create-project.sh)"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z]{4}$", var.suffix))
+    error_message = "Suffix musi mieć dokładnie 4 małe litery (a-z)."
+  }
+}
+
 variable "project_name_base" {
-  description = "Bazowa nazwa projektu (bez suffixu). Suffix 4 losowych liter dodawany automatycznie."
+  description = "Bazowa nazwa projektu (bez suffixu)."
   type        = string
   default     = "reinventor-ai-gateway-poc"
 

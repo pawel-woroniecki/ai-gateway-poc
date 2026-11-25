@@ -7,7 +7,8 @@
 # Prefix: ai-gateway-poc-{suffix}/bootstrap
 #
 # Użycie:
-#   ./scripts/bootstrap.sh
+#   ./scripts/bootstrap.sh           # odczyt z .project-env
+#   ./scripts/bootstrap.sh abcd      # podany suffix
 #
 # PROJECT_ID i SUFFIX odczytywane automatycznie z .project-env
 # (utworzonego przez create-project.sh).
@@ -19,27 +20,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_config.sh"
-auto_detect_project
-
-# --- Sprawdzenie wymagań ---
-check_requirements() {
-  local missing=()
-  command -v terraform >/dev/null 2>&1 || missing+=("terraform")
-  command -v gcloud >/dev/null 2>&1    || missing+=("gcloud")
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    echo "BŁĄD: Brakujące narzędzia: ${missing[*]}" >&2
-    exit 1
-  fi
-}
+auto_detect_project "${1:-}"
 check_requirements
 
 : "${PROJECT_ID:?Ustaw zmienną PROJECT_ID lub najpierw uruchom create-project.sh}"
 : "${SUFFIX:?Ustaw zmienną SUFFIX lub najpierw uruchom create-project.sh}"
 REGION="${REGION:-europe-central2}"
 
-BOOTSTRAP_DIR="${ROOT_DIR}/terraform/bootstrap"
-BOOTSTRAP_PREFIX="ai-gateway-poc-${SUFFIX}/bootstrap"
+BOOTSTRAP_PREFIX=$(state_prefix "bootstrap")
 
 echo "=== AI Gateway PoC – Bootstrap ==="
 echo "Project:  ${PROJECT_ID}"
@@ -52,10 +40,10 @@ echo ""
 gcloud config set project "${PROJECT_ID}"
 
 # Terraform bootstrap
-cd "${BOOTSTRAP_DIR}"
+cd "${ROOT_DIR}/terraform/bootstrap"
 
 echo ">>> terraform init..."
-if ! terraform init \
+if ! terraform init -reconfigure \
   -backend-config="bucket=${CENTRAL_BUCKET}" \
   -backend-config="prefix=${BOOTSTRAP_PREFIX}" \
   -input=false; then
