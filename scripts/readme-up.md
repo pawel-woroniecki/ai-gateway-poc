@@ -135,15 +135,13 @@ Po tym kroku `kubectl` wskazuje na nowo utworzony klaster.
 ### 8. Etap 3/4 – Deploy mock backend
 
 ```bash
-gcloud auth configure-docker "${AR_REGION}-docker.pkg.dev" --quiet
-
-docker pull python:3.11-alpine
-
 MOCK_IMAGE="$(ar_image mock-backend):latest"
 cd "$ROOT_DIR/mock"
 
-docker build -t "$MOCK_IMAGE" .
-docker push "$MOCK_IMAGE"
+gcloud builds submit \
+  --tag "$MOCK_IMAGE" \
+  --project "$PROJECT_ID" \
+  --quiet
 
 sed "s|image: mock-backend:latest|image: ${MOCK_IMAGE}|" \
   k8s.yaml | kubectl apply -f -
@@ -153,12 +151,9 @@ kubectl rollout status deployment/mock-backend --timeout=120s
 
 Mock backend to prosty serwer HTTP symulujący odpowiedzi LLM. Etap obejmuje:
 
-0. **gcloud auth configure-docker** – konfiguruje Docker credentials dla Artifact Registry w regionie projektu
-1. **docker pull python:3.11-alpine** – pobiera obraz bazowy z widocznym postępem (unika długiego oczekiwania podczas buildu)
-2. **docker build** – buduje obraz kontenera z katalogu `mock/` (używa lekkiego Alpine zamiast Debian slim)
-3. **docker push** – wysyła obraz do Artifact Registry w projekcie
-4. **sed + kubectl apply** – modyfikuje manifest Kubernetes (`k8s.yaml`), podmieniając nazwę obrazu na pełną ścieżkę GCR, i wdraża na klaster
-5. **kubectl rollout status** – czeka aż deployment będzie gotowy (timeout 120 sekund)
+1. **gcloud builds submit** – wysyła kod do Cloud Build, który buduje obraz Docker i pushuje go do Artifact Registry. Build odbywa się na serwerach Google, nie wymaga lokalnego Dockera
+2. **sed + kubectl apply** – modyfikuje manifest Kubernetes (`k8s.yaml`), podmieniając nazwę obrazu na pełną ścieżkę GCR, i wdraża na klaster
+3. **kubectl rollout status** – czeka aż deployment będzie gotowy (timeout 120 sekund)
 
 ### 9. Etap 4/4 – Helm install LiteLLM
 

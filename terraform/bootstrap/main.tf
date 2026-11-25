@@ -48,6 +48,7 @@ resource "google_project_service" "apis" {
     "compute.googleapis.com",
     "container.googleapis.com",
     "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
     "iam.googleapis.com",
     "aiplatform.googleapis.com",
     "cloudresourcemanager.googleapis.com",

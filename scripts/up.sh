@@ -18,7 +18,7 @@ auto_detect_project "${1:-}"
 
 # Sprawdzenie dodatkowych wymagań
 check_requirements
-for cmd in kubectl helm docker; do
+for cmd in kubectl helm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "BŁĄD: Brak wymaganego narzędzia: $cmd" >&2
     exit 1
@@ -88,24 +88,17 @@ echo "  kubectl skonfigurowany."
 echo ""
 echo ">>> [3/4] Deploy mock backend..."
 
-# Konfiguracja Docker auth dla Artifact Registry
-echo "  Konfiguracja Docker auth dla Artifact Registry..."
-gcloud auth configure-docker "${AR_REGION}-docker.pkg.dev" --quiet
-
-# Pre-pull obrazu bazowego (widoczny postęp pobierania)
-echo "  Pobieranie obrazu bazowego python:3.11-alpine..."
-docker pull python:3.11-alpine
-
 MOCK_IMAGE="$(ar_image mock-backend):latest"
 cd "$ROOT_DIR/mock"
 
-if ! docker build -t "$MOCK_IMAGE" .; then
-  echo "BŁĄD: Docker build nie powiodło się." >&2
-  exit 1
-fi
-
-if ! docker push "$MOCK_IMAGE"; then
-  echo "BŁĄD: Docker push do Artifact Registry nie powiodło się." >&2
+# Cloud Build: buduje i pushuje obraz po stronie Google
+# (omija problemy z Docker networking w Cloud Shell)
+echo "  Cloud Build: budowanie i push obrazu..."
+if ! gcloud builds submit \
+  --tag "$MOCK_IMAGE" \
+  --project "$PROJECT_ID" \
+  --quiet; then
+  echo "BŁĄD: Cloud Build nie powiodło się." >&2
   exit 1
 fi
 
