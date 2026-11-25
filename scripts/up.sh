@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 # up.sh – Stawianie środowiska AI Gateway PoC
-# Kolejność: Terraform infra → kubectl config → mock backend → Helm release
+# Kolejność: Terraform infra → kubectl config → mock backend → Helm release → port-forward
 #
 # State w centralnym buckecie GCS: reinventor-terraform-states
 # Prefix: ai-gateway-poc-{suffix}/dev
@@ -125,6 +125,11 @@ if ! helm upgrade --install litellm oci://ghcr.io/berriai/litellm-helm \
   exit 1
 fi
 
+# --- 5. Port-forward (opcjonalny) ---
+echo ""
+echo ">>> [5/5] Port-forward do LiteLLM..."
+start_port_forward "svc/litellm" 4000
+
 echo ""
 echo "============================================"
 echo " AI Gateway PoC – GOTOWE"
@@ -132,21 +137,19 @@ echo "============================================"
 echo ""
 echo " Master Key: sk-aigw-master-poc-dev"
 echo ""
-echo " Port-forward do LiteLLM:"
-echo "   kubectl port-forward svc/litellm 4000:4000"
+echo " Port-forward aktywny:"
+echo "   localhost:${PF_PORT} → svc/litellm:4000  (PID: ${PF_PID})"
 echo ""
 echo " Test:"
-echo "   curl http://localhost:4000/health/liveliness"
+echo "   curl http://localhost:${PF_PORT}/health/liveliness"
 echo ""
 echo " LiteLLM Admin UI (via Web Preview):"
-echo "   1. kubectl port-forward svc/litellm 4000:4000"
-echo "   2. Web Preview → port 4000"
-echo "   3. Login: admin / sk-aigw-master-poc-dev"
-echo "   UWAGA: Jeśli env-based login nie działa (baza ma już użytkowników),"
-echo "   stwórz usera API: patrz docs/litellm-ui-login.md"
+echo "   1. Web Preview → port ${PF_PORT}"
+echo "   2. Login: admin / sk-aigw-master-poc-dev"
+echo "   Instrukcja: instrukcje/06-litellm-admin-ui.md"
 echo ""
 echo " Test mock modelu:"
-echo "   curl http://localhost:4000/v1/chat/completions \\"
+echo "   curl http://localhost:${PF_PORT}/v1/chat/completions \\"
 echo "     -H 'Authorization: Bearer sk-aigw-master-poc-dev' \\"
 echo "     -H 'Content-Type: application/json' \\"
 echo "     -d '{\"model\": \"mock-local\", \"messages\": [{\"role\": \"user\", \"content\": \"test\"}]}'"

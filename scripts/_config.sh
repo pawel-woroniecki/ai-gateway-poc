@@ -85,3 +85,46 @@ ar_image() {
   local image_name="$1"
   echo "${AR_REGION}-docker.pkg.dev/${PROJECT_ID}/ai-gateway/${image_name}"
 }
+
+# --- Znajdowanie wolnego portu lokalnego ---
+# Sprawdza czy podany port jest wolny, jeśli nie – szuka kolejnego.
+# Cloud Shell nie ma lsof, więc używamy /dev/tcp lub ss.
+# Użycie: LOCAL_PORT=$(find_free_port 4000)
+find_free_port() {
+  local port="${1:-4000}"
+  local max_attempts=20
+  for (( i=0; i<max_attempts; i++ )); do
+    if ! (echo >/dev/tcp/127.0.0.1/$port) 2>/dev/null; then
+      echo "$port"
+      return 0
+    fi
+    port=$((port + 1))
+  done
+  echo "BŁĄD: Nie znaleziono wolnego portu w zakresie ${1}–$((${1}+max_attempts-1))" >&2
+  return 1
+}
+
+# --- Uruchomienie port-forward na wolnym porcie ---
+# Użycie: start_port_forward "svc/litellm" 4000
+# Ustawia zmienną PF_PORT na wybrany port i uruchamia port-forward w tle.
+start_port_forward() {
+  local service="$1"
+  local target_port="${2:-4000}"
+  local base_port="${3:-$target_port}"
+
+  # Ubij istniejące port-forwardy do tego samego service
+  pkill -f "port-forward ${service}" 2>/dev/null || true
+  sleep 1
+
+  PF_PORT=$(find_free_port "$base_port")
+  echo "  Port-forward: localhost:${PF_PORT} → ${service}:${target_port}"
+  kubectl port-forward "$service" "${PF_PORT}:${target_port}" &
+  PF_PID=$!
+  sleep 2
+
+  # Sprawdź czy proces jeszcze żyje
+  if ! kill -0 "$PF_PID" 2>/dev/null; then
+    echo "BŁĄD: Port-forward nie wystartował." >&2
+    return 1
+  fi
+}
