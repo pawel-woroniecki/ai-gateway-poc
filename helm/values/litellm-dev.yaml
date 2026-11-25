@@ -13,6 +13,11 @@ image:
 # --- Master key (PoC) ---
 masterkey: "sk-aigw-master-poc-dev"
 
+# --- UI credentials (wymagane od nowszych wersji LiteLLM) ---
+envVars:
+  UI_USERNAME: admin
+  UI_PASSWORD: sk-aigw-master-poc-dev
+
 # --- Log level ---
 # UWAGA: logLevel celowo pominięty – chart v1.110.3 ma bug (duplikuje
 # LITELLM_LOG env var gdy logLevel jest ustawiony). Domyślnie = INFO.
