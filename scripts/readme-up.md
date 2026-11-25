@@ -4,12 +4,14 @@ Dokument wyjaśnia krok po kroku co robi skrypt `up.sh`, który stawia pełne ś
 
 ## Cel skryptu
 
-`up.sh` to główny skrypt uruchamiający środowisko. Wykonuje cztery etapy:
+`up.sh` to główny skrypt uruchamiający środowisko. Wykonuje sześć etapów:
 
 1. Tworzy infrastrukturę w GCP (klaster Kubernetes, sieć, konta serwisowe)
 2. Konfiguruje dostęp do klastra (kubectl)
 3. Buduje i wdraża mock backend (symulowany endpoint LLM)
 4. Instaluje LiteLLM – bramkę AI (gateway)
+5. Sprawdza migracje bazy danych (fallback: `prisma db push`)
+6. Pobiera External IP LoadBalancera i uruchamia port-forward
 
 Po uruchomieniu tego skryptu środowisko jest w pełni gotowe do testowania.
 
@@ -44,7 +46,7 @@ auto_detect_project "${1:-}"
 
 ```bash
 check_requirements
-for cmd in kubectl helm docker; do
+for cmd in kubectl helm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "BŁĄD: Brak wymaganego narzędzia: $cmd" >&2
     exit 1
@@ -56,7 +58,8 @@ Oprócz standardowych `terraform` i `gcloud`, skrypt wymaga dodatkowych narzędz
 
 - **kubectl** – CLI do zarządzania klastrem Kubernetes
 - **helm** – menedżer pakietów Kubernetes (do instalacji LiteLLM)
-- **docker** – do budowania obrazu mock backendu
+
+Docker **nie jest wymagany** lokalnie – budowanie obrazu mock backendu odbywa się na serwerach Google (Cloud Build).
 
 ### 4. Walidacja zmiennych
 
@@ -87,7 +90,7 @@ echo "============================================"
 
 Stan Terraform dla środowiska dev przechowywany jest pod ścieżką np. `gs://reinventor-terraform-states/ai-gateway-poc-qkhv/dev/`.
 
-### 6. Etap 1/4 – Terraform apply (infrastruktura)
+### 6. Etap 1/5 – Terraform apply (infrastruktura)
 
 ```bash
 cd "${ROOT_DIR}/terraform/environments/dev"
@@ -106,7 +109,7 @@ Terraform tworzy infrastrukturę GCP:
 - **GKE** – klaster Kubernetes (zonal, 1 node `e2-standard-2`)
 - **Service Account** dla LiteLLM z uprawnieniami Workload Identity
 
-Flaga `-auto-approve` pomija pytanie o potwierdzenie (w przeciwieństwie do `create-project.sh` i `bootstrap.sh`, które pytają o `yes`).
+Flaga `-auto-approve` pomija pytanie o potwierdzenie. Oba kroki (init i apply) używają obsługi błędów (`if !`) – przy niepowodzeniu skrypt przerywa działanie.
 
 Po apply skrypt pobiera adres konta serwisowego LiteLLM:
 
@@ -114,7 +117,7 @@ Po apply skrypt pobiera adres konta serwisowego LiteLLM:
 LITELLM_SA=$(terraform output -raw litellm_sa_email 2>/dev/null)
 ```
 
-### 7. Etap 2/4 – Konfiguracja kubectl
+### 7. Etap 2/5 – Konfiguracja kubectl
 
 ```bash
 CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null)
@@ -132,7 +135,7 @@ Pobiera dane dostępowe do klastra GKE i konfiguruje `kubectl`:
 
 Po tym kroku `kubectl` wskazuje na nowo utworzony klaster.
 
-### 8. Etap 3/4 – Deploy mock backend
+### 8. Etap 3/5 – Deploy mock backend
 
 ```bash
 MOCK_IMAGE="$(ar_image mock-backend):latest"
@@ -152,10 +155,10 @@ kubectl rollout status deployment/mock-backend --timeout=120s
 Mock backend to prosty serwer HTTP symulujący odpowiedzi LLM. Etap obejmuje:
 
 1. **gcloud builds submit** – wysyła kod do Cloud Build, który buduje obraz Docker i pushuje go do Artifact Registry. Build odbywa się na serwerach Google, nie wymaga lokalnego Dockera
-2. **sed + kubectl apply** – modyfikuje manifest Kubernetes (`k8s.yaml`), podmieniając nazwę obrazu na pełną ścieżkę GCR, i wdraża na klaster
+2. **sed + kubectl apply** – modyfikuje manifest Kubernetes (`k8s.yaml`), podmieniając nazwę obrazu na pełną ścieżkę Artifact Registry, i wdraża na klaster
 3. **kubectl rollout status** – czeka aż deployment będzie gotowy (timeout 120 sekund)
 
-### 9. Etap 4/4 – Helm install LiteLLM
+### 9. Etap 4/5 – Helm install LiteLLM
 
 ```bash
 cd "$ROOT_DIR"
@@ -164,7 +167,7 @@ helm upgrade --install litellm oci://ghcr.io/berriai/litellm-helm \
   -f helm/values/litellm-dev.yaml \
   --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=${LITELLM_SA}" \
   --wait \
-  --timeout 5m
+  --timeout 8m
 ```
 
 Instalacja LiteLLM – bramki AI – za pomocą Helm chart:
@@ -174,31 +177,79 @@ Instalacja LiteLLM – bramki AI – za pomocą Helm chart:
 - `-f helm/values/litellm-dev.yaml` – plik z konfiguracją deweloperską (modele, zasoby, baza danych)
 - `--set "serviceAccount.annotations..."` – przypisuje konto serwisowe GCP do poda LiteLLM (Workload Identity)
 - `--wait` – czeka aż wszystkie pody będą gotowe
-- `--timeout 5m` – timeout 5 minut
+- `--timeout 8m` – timeout 8 minut (zwiększony z domyślnych 5m ze względu na czas inicjalizacji PostgreSQL i migracji)
 
-### 10. Podsumowanie końcowe
+### 10. Etap 5/6 – Migracje bazy danych (fallback)
+
+```bash
+if ! kubectl exec deploy/litellm -- python3 -c "
+import asyncio
+from litellm.proxy.db.prisma_client import PrismaClient
+pc = PrismaClient(database_url=None, proxy_logging_obj=None)
+asyncio.run(pc.connect())
+print('DB OK')
+" 2>/dev/null | grep -q "DB OK"; then
+  kubectl exec deploy/litellm -- sh -c '
+    export DATABASE_URL="postgresql://litellm:litellm-poc-password@litellm-postgresql:5432/litellm"
+    export DIRECT_URL="$DATABASE_URL"
+    prisma db push --schema=/app/schema.prisma --accept-data-loss
+  '
+  kubectl rollout restart deployment/litellm
+  kubectl rollout status deployment/litellm --timeout=180s
+fi
+```
+
+Helm chart LiteLLM zawiera migrations job oparty na Prisma ORM. Czasem job ten failuje, gdy PostgreSQL nie jest jeszcze w pełni gotowy. Skrypt implementuje fallback:
+
+1. **Sprawdzenie** – próbuje połączyć się z bazą danych z poda LiteLLM
+2. **Jeśli tabele nie istnieją** – uruchamia `prisma db push` z explicite ustawionym `DATABASE_URL`
+3. **Restart** – restartuje deployment LiteLLM i czeka na gotowość (timeout 180s)
+
+Jeśli tabele istnieją – wyświetla "Tabele OK" i przechodzi dalej.
+
+### 11. Etap 6/6 – External IP i port-forward
+
+```bash
+# Czekaj na External IP (max 2 min)
+for i in $(seq 1 24); do
+  EXTERNAL_IP=$(kubectl get svc litellm \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+  if [ -n "$EXTERNAL_IP" ] && [ "$EXTERNAL_IP" != "<pending>" ]; then
+    break
+  fi
+  sleep 5
+done
+
+start_port_forward "litellm" 4000
+```
+
+Etap końcowy przygotowuje dostęp do LiteLLM:
+
+1. **External IP** – czeka na przydzielenie adresu IP przez LoadBalancer (max ~2 minuty, sprawdza co 5 sekund). LiteLLM jest wystawiony jako Service typu LoadBalancer, dzięki czemu Admin UI jest dostępny z przeglądarki (Cloud Shell Web Preview nie działa – stripuje nagłówki Set-Cookie)
+2. **Port-forward** – funkcja `start_port_forward` z `_config.sh` uruchamia port-forward na wolnym porcie (domyślnie 4000, szuka kolejnych jeśli zajęty). Port-forward umożliwia dostęp do API LiteLLM z poziomu Cloud Shell via curl
+
+### 12. Podsumowanie końcowe
 
 ```bash
 echo " Master Key: sk-aigw-master-poc-dev"
 echo ""
-echo " Port-forward do LiteLLM:"
-echo "   kubectl port-forward svc/litellm 4000:4000"
+echo " LiteLLM Admin UI (przeglądarka):"
+echo "   http://${EXTERNAL_IP}:4000/ui"
+echo ""
+echo " Port-forward (curl z Cloud Shell):"
+echo "   localhost:${PF_PORT} → deploy/litellm:4000  (PID: ${PF_PID})"
 echo ""
 echo " Test:"
-echo "   curl http://localhost:4000/health/liveliness"
-echo ""
-echo " Test mock modelu:"
-echo "   curl http://localhost:4000/v1/chat/completions \\"
-echo "     -H 'Authorization: Bearer sk-aigw-master-poc-dev' \\"
-echo "     -H 'Content-Type: application/json' \\"
-echo "     -d '{\"model\": \"mock-local\", \"messages\": [{\"role\": \"user\", \"content\": \"test\"}]}'"
+echo "   curl http://localhost:${PF_PORT}/health/liveliness"
 ```
 
 Skrypt wyświetla:
 
 - **Master Key** – klucz API do autoryzacji requestów
-- **Port-forward** – komenda do tunelowania portu LiteLLM na localhost
+- **Admin UI URL** – adres zewnętrzny do LiteLLM Admin UI (jeśli External IP został przydzielony)
+- **Port-forward** – wybrany port i PID procesu
 - **Komendy testowe** – gotowe do skopiowania polecenia `curl` do weryfikacji
+- **Referencja** do instrukcji UI (`instrukcje/06-litellm-admin-ui.md`)
 
 ## Schemat przepływu
 
@@ -209,21 +260,30 @@ Użytkownik uruchamia skrypt
 Załadowanie konfiguracji + wykrywanie projektu
         │
         ▼
-Sprawdzenie: terraform, gcloud, kubectl, helm, docker?
+Sprawdzenie: terraform, gcloud, kubectl, helm?
         │ BRAK → błąd, koniec
         ▼ OK
-[1/4] Terraform apply – infrastruktura (VPC, GKE, SA)
+[1/5] Terraform apply – infrastruktura (VPC, GKE, SA)
         │ BŁĄD → koniec
         ▼ OK
-[2/4] gcloud get-credentials – konfiguracja kubectl
+[2/5] gcloud get-credentials – konfiguracja kubectl
         │ BŁĄD → koniec
         ▼ OK
-[3/4] Docker build + push + kubectl apply – mock backend
+[3/5] Cloud Build + kubectl apply – mock backend
         │ BŁĄD → koniec
         ▼ OK
-[4/4] Helm install – LiteLLM
+[4/5] Helm install – LiteLLM (timeout: 8m)
         │ BŁĄD → koniec
         ▼ OK
+[5/6] Sprawdzenie migracji DB
+        │
+        ├── Tabele OK → kontynuuj
+        │
+        └── Brak tabel → prisma db push + restart deployment
+        ▼
+[6/6] External IP (max 2 min) + port-forward
+        │
+        ▼
 Gotowe – środowisko działa
 ```
 

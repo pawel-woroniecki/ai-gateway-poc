@@ -7,7 +7,7 @@ Dokument wyjaśnia krok po kroku co robi plik konfiguracyjny `_config.sh`, któr
 `_config.sh` nie jest uruchamiany samodzielnie – jest **ładowany** (sourcowany) przez pozostałe skrypty. Dostarcza im:
 
 - stałe konfiguracyjne (nazwy, ścieżki, konto billingowe)
-- funkcje pomocnicze (generowanie prefiksu state, sprawdzanie wymagań, auto-detekcja projektu)
+- funkcje pomocnicze (generowanie prefiksu state, sprawdzanie wymagań, auto-detekcja projektu, port-forward)
 
 Dzięki centralizacji konfiguracji zmiana np. nazwy bucketa wymaga edycji tylko jednego pliku.
 
@@ -134,15 +134,13 @@ Dzięki temu:
 - po uruchomieniu `create-project.sh` wszystkie kolejne skrypty automatycznie wiedzą, na jakim projekcie pracują
 - podanie suffixu jako argumentu pozwala operować na **dowolnym** projekcie, niezależnie od tego, co jest w `.project-env`
 
-### AR_REGION
+### 6. AR_REGION i funkcja `ar_image()`
 
 ```bash
 AR_REGION="${AR_REGION:-europe-central2}"
 ```
 
 Region Artifact Registry – musi być zgodny z `var.region` w Terraform. Domyślnie `europe-central2` (Warszawa). Można nadpisać zmienną środowiskową.
-
-### Funkcja ar_image()
 
 ```bash
 ar_image() {
@@ -160,6 +158,87 @@ ar_image "mock-backend"
 
 Repozytorium `ai-gateway` jest tworzone automatycznie przez Terraform w module dev.
 
+### 7. Funkcja `find_free_port()` – znajdowanie wolnego portu
+
+```bash
+find_free_port() {
+  local port="${1:-4000}"
+  local max_attempts=20
+  for (( i=0; i<max_attempts; i++ )); do
+    if ! (echo >/dev/tcp/127.0.0.1/$port) 2>/dev/null; then
+      echo "$port"
+      return 0
+    fi
+    port=$((port + 1))
+  done
+  echo "BŁĄD: Nie znaleziono wolnego portu w zakresie ${1}–$((${1}+max_attempts-1))" >&2
+  return 1
+}
+```
+
+Sprawdza czy podany port jest wolny, a jeśli nie – szuka kolejnego. Mechanizm:
+
+- Zaczyna od portu podanego jako argument (domyślnie 4000)
+- Próbuje połączyć się z `127.0.0.1:port` przez bash `/dev/tcp`
+- Jeśli połączenie się nie udaje (port wolny) – zwraca numer portu
+- Jeśli port zajęty – próbuje kolejny (do 20 prób)
+
+Cloud Shell nie ma narzędzia `lsof`, dlatego test portu opiera się na wbudowanym mechanizmie `/dev/tcp` basha.
+
+**Przykład użycia:**
+
+```bash
+LOCAL_PORT=$(find_free_port 4000)
+# → 4000 (jeśli wolny) lub 4001, 4002... (jeśli zajęte)
+```
+
+### 8. Funkcja `start_port_forward()` – uruchomienie port-forward
+
+```bash
+start_port_forward() {
+  local deploy_name="$1"
+  local target_port="${2:-4000}"
+  local base_port="${3:-$target_port}"
+
+  pkill -f "port-forward" 2>/dev/null || true
+  sleep 1
+
+  kubectl rollout status "deploy/${deploy_name}" --timeout=120s
+
+  PF_PORT=$(find_free_port "$base_port")
+  kubectl port-forward "deploy/${deploy_name}" "${PF_PORT}:${target_port}" &
+  PF_PID=$!
+  sleep 2
+
+  if ! kill -0 "$PF_PID" 2>/dev/null; then
+    echo "BŁĄD: Port-forward nie wystartował." >&2
+    return 1
+  fi
+}
+```
+
+Uruchamia port-forward na wolnym porcie do wskazanego deploymentu. Wykonuje kolejno:
+
+1. **Ubija istniejące port-forwardy** – `pkill -f "port-forward"` zamyka ewentualne pozostałości z poprzedniej sesji
+2. **Czeka na deployment** – `kubectl rollout status` upewnia się, że pod jest gotowy (timeout 120s)
+3. **Znajduje wolny port** – wywołuje `find_free_port` z bazowym portem
+4. **Uruchamia port-forward w tle** – operator `&` uruchamia proces w tle
+5. **Weryfikuje** – `kill -0` sprawdza czy proces jeszcze żyje po 2 sekundach
+
+Funkcja ustawia dwie zmienne dostępne dla skryptu wywołującego:
+
+| Zmienna | Opis |
+|---|---|
+| `PF_PORT` | Wybrany port lokalny (np. 4000) |
+| `PF_PID` | PID procesu port-forward (do ewentualnego zatrzymania) |
+
+**Przykład użycia (z `up.sh`):**
+
+```bash
+start_port_forward "litellm" 4000
+echo "Port-forward: localhost:${PF_PORT} → deploy/litellm:4000 (PID: ${PF_PID})"
+```
+
 ## Schemat zależności
 
 ```
@@ -167,14 +246,18 @@ _config.sh
     │
     ├── Stałe: BILLING_ACCOUNT, PROJECT_NAME_BASE, CENTRAL_BUCKET, AR_REGION, ...
     │
-    ├── state_prefix()       ← używana przez wszystkie skrypty
+    ├── state_prefix()        ← używana przez wszystkie skrypty
     │
-    ├── ar_image()           ← używana przez up.sh, down.sh
+    ├── ar_image()            ← używana przez up.sh, down.sh
     │
-    ├── check_requirements() ← używana przez wszystkie skrypty
+    ├── check_requirements()  ← używana przez wszystkie skrypty
     │
-    └── auto_detect_project() ← używana przez bootstrap.sh, up.sh,
-                                 down.sh, destroy-project.sh
+    ├── auto_detect_project() ← używana przez bootstrap.sh, up.sh,
+    │                            down.sh, destroy-project.sh
+    │
+    ├── find_free_port()      ← używana przez start_port_forward()
+    │
+    └── start_port_forward()  ← używana przez up.sh
 ```
 
 ## Powiązanie z innymi skryptami

@@ -6,10 +6,12 @@ Dokument wyjaśnia krok po kroku co robi skrypt `down.sh`, który usuwa środowi
 
 `down.sh` jest odwrotnością `up.sh` – usuwa zasoby deweloperskie w kolejności odwrotnej do tworzenia:
 
-1. Odinstalowuje LiteLLM (Helm)
-2. Usuwa zasoby Kubernetes (mock backend, sekrety, configmapy)
-3. Usuwa obraz kontenera z Google Container Registry
-4. Niszczy infrastrukturę Terraform (klaster GKE, VPC, konta serwisowe)
+1. Sprawdza czy klaster GKE istnieje (optymalizacja – pomija Helm/kubectl gdy brak klastra)
+2. Ubija aktywne port-forwardy
+3. Odinstalowuje LiteLLM (Helm) z namespace `litellm`
+4. Usuwa zasoby Kubernetes (mock backend)
+5. Usuwa obraz kontenera z Artifact Registry
+6. Niszczy infrastrukturę Terraform (klaster GKE, VPC, konta serwisowe)
 
 **Projekt GCP pozostaje** – można ponownie uruchomić `up.sh` bez konieczności powtarzania `create-project.sh` i `bootstrap.sh`.
 
@@ -80,44 +82,82 @@ fi
 
 Skrypt pyta o potwierdzenie przed usunięciem. Domyślna odpowiedź to **N** (nie) – trzeba jawnie wpisać `y` lub `Y`.
 
-### 6. Etap 1/4 – Helm uninstall
+### 6. Etap 0/5 – Sprawdzenie klastra GKE
 
 ```bash
-helm uninstall litellm 2>/dev/null || echo "  (nie znaleziono release)"
+CLUSTER_NAME="ai-gateway-poc"
+GKE_EXISTS=false
+
+if gcloud container clusters describe "$CLUSTER_NAME" \
+     --zone="$ZONE" --project="$PROJECT_ID" \
+     --format="value(status)" 2>/dev/null | grep -q "RUNNING"; then
+  GKE_EXISTS=true
+  gcloud container clusters get-credentials "$CLUSTER_NAME" \
+    --zone="$ZONE" --project="$PROJECT_ID" --quiet
+else
+  echo "  Klaster nie istnieje – pomijam kroki Helm/kubectl (2–3)."
+fi
 ```
 
-Odinstalowuje release Helm `litellm`. Jeśli release nie istnieje (już usunięty), wyświetla informację i kontynuuje – `|| echo "..."` zapobiega przerwaniu skryptu.
+**Optymalizacja wydajności:** Skrypt sprawdza czy klaster GKE istnieje zanim spróbuje wykonywać komendy Helm i kubectl. Komenda `gcloud container clusters describe` wykonuje się w ~2 sekundy, podczas gdy kubectl/helm na nieistniejącym klastrze generowałyby ~60 sekund timeoutów.
 
-### 7. Etap 2/4 – Usuwanie zasobów Kubernetes
+Jeśli klaster istnieje:
+- Ustawia flagę `GKE_EXISTS=true`
+- Pobiera credentials kubectl
+
+Jeśli klaster nie istnieje:
+- Kroki 2 i 3 (Helm/kubectl) zostaną pominięte
+
+### 7. Etap 1/5 – Ubijanie port-forwardów
 
 ```bash
-kubectl delete -f "$ROOT_DIR/mock/k8s.yaml" 2>/dev/null || echo "  (mock-backend nie znaleziony)"
-kubectl delete secret litellm-secrets litellm-env 2>/dev/null || true
-kubectl delete configmap litellm-config 2>/dev/null || true
+pkill -f "port-forward" 2>/dev/null || true
 ```
 
-Usuwa:
+Ubija wszystkie aktywne procesy port-forward uruchomione przez `up.sh`.
 
-- **mock backend** – deployment i service zdefiniowane w `mock/k8s.yaml`
-- **sekrety** (`litellm-secrets`, `litellm-env`) – klucze API i zmienne środowiskowe
-- **configmapy** (`litellm-config`) – konfiguracja LiteLLM
+### 8. Etap 2/5 – Helm uninstall (warunkowo)
 
-Każde polecenie ma `|| true` lub `|| echo "..."`, dzięki czemu brak danego zasobu nie przerywa skryptu.
+```bash
+if $GKE_EXISTS; then
+  helm uninstall litellm -n litellm 2>/dev/null || echo "  (nie znaleziono release)"
+fi
+```
 
-### 8. Etap 3/4 – Usuwanie obrazu z Artifact Registry
+Odinstalowuje release Helm `litellm` z namespace `litellm`. Flaga `-n litellm` jest konieczna, ponieważ LiteLLM jest instalowany w dedykowanym namespace.
+
+**Wykonuje się tylko gdy klaster GKE istnieje** (`GKE_EXISTS=true`). Jeśli release nie istnieje (już usunięty), wyświetla informację i kontynuuje.
+
+### 9. Etap 3/5 – Usuwanie zasobów Kubernetes (warunkowo)
+
+```bash
+if $GKE_EXISTS; then
+  kubectl delete -f "$ROOT_DIR/k8s/mock-backend.yaml" 2>/dev/null \
+    || echo "  (mock-backend nie znaleziony)"
+fi
+```
+
+Usuwa **mock backend** – deployment i service zdefiniowane w `k8s/mock-backend.yaml`.
+
+**Wykonuje się tylko gdy klaster GKE istnieje.** Polecenie ma `|| echo "..."`, dzięki czemu brak danego zasobu nie przerywa skryptu.
+
+### 10. Etap 4/5 – Usuwanie obrazu z Artifact Registry
 
 ```bash
 MOCK_IMAGE="$(ar_image mock-backend):latest"
 gcloud artifacts docker images delete "$MOCK_IMAGE" \
-  --delete-tags --quiet 2>/dev/null || echo "  (obraz nie znaleziony)"
+  --delete-tags --quiet 2>/dev/null \
+  || echo "  (obraz nie znaleziony lub registry nie istnieje)"
 ```
 
-Usuwa obraz Docker mock backendu z Google Container Registry:
+Usuwa obraz Docker mock backendu z Artifact Registry:
 
-- `--force-delete-tags` – usuwa wszystkie tagi obrazu
+- `--delete-tags` – usuwa wszystkie tagi obrazu
 - `--quiet` – nie pyta o potwierdzenie
 
-### 9. Etap 4/4 – Terraform destroy
+Ten krok wykonuje się niezależnie od istnienia klastra GKE, ponieważ Artifact Registry jest zasobem na poziomie projektu.
+
+### 11. Etap 5/5 – Terraform destroy
 
 ```bash
 cd "$ROOT_DIR/terraform/environments/dev"
@@ -143,9 +183,9 @@ Niszczy infrastrukturę GCP utworzoną przez `up.sh`:
    - konta serwisowe
    - reguły firewalla
 
-Flaga `-auto-approve` pomija pytanie o potwierdzenie (użytkownik już potwierdził na początku skryptu).
+Flaga `-auto-approve` pomija pytanie o potwierdzenie (użytkownik już potwierdził na początku skryptu). Oba kroki używają obsługi błędów (`if !`) – jeśli terraform init lub destroy się nie powiedzie, skrypt przerywa działanie z komunikatem błędu.
 
-### 10. Podsumowanie końcowe
+### 12. Podsumowanie końcowe
 
 ```bash
 echo " AI Gateway PoC – USUNIĘTE"
@@ -171,16 +211,26 @@ Sprawdzenie wymagań (terraform, gcloud, kubectl, helm)
 Potwierdzenie użytkownika: "Kontynuować? (y/N)"
         │ N → anulowano, koniec
         ▼ y
-[1/4] Helm uninstall – LiteLLM
+[0/5] Sprawdzenie klastra GKE (~2s)
+        │
+        ├── GKE istnieje → GKE_EXISTS=true, pobranie credentials
+        │
+        └── GKE nie istnieje → GKE_EXISTS=false
+                                (kroki 2–3 pominięte)
+        ▼
+[1/5] Ubijanie port-forwardów
+        │
+        ▼
+[2/5] Helm uninstall – LiteLLM (namespace: litellm)
+        │ (pominięto jeśli GKE_EXISTS=false)
+        ▼
+[3/5] kubectl delete – mock backend (k8s/mock-backend.yaml)
+        │ (pominięto jeśli GKE_EXISTS=false)
+        ▼
+[4/5] gcloud – usunięcie obrazu z Artifact Registry
         │ (kontynuuje nawet jeśli nie znaleziono)
         ▼
-[2/4] kubectl delete – mock backend, sekrety, configmapy
-        │ (kontynuuje nawet jeśli nie znaleziono)
-        ▼
-[3/4] gcloud – usunięcie obrazu z Artifact Registry
-        │ (kontynuuje nawet jeśli nie znaleziono)
-        ▼
-[4/4] Terraform destroy – infrastruktura (GKE, VPC, SA)
+[5/5] Terraform destroy – infrastruktura (GKE, VPC, SA)
         │ BŁĄD → koniec
         ▼ OK
 Gotowe – projekt GCP nadal istnieje
