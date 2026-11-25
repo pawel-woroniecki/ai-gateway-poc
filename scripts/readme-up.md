@@ -137,6 +137,8 @@ Po tym kroku `kubectl` wskazuje na nowo utworzony klaster.
 ```bash
 cd "$ROOT_DIR/mock"
 
+docker pull python:3.11-alpine
+
 docker build -t "gcr.io/${PROJECT_ID}/mock-backend:latest" .
 docker push "gcr.io/${PROJECT_ID}/mock-backend:latest"
 
@@ -148,7 +150,8 @@ kubectl rollout status deployment/mock-backend --timeout=120s
 
 Mock backend to prosty serwer HTTP symulujący odpowiedzi LLM. Etap obejmuje:
 
-1. **docker build** – buduje obraz kontenera z katalogu `mock/`
+0. **docker pull python:3.11-alpine** – pobiera obraz bazowy z widocznym postępem (unika długiego oczekiwania podczas buildu)
+1. **docker build** – buduje obraz kontenera z katalogu `mock/` (używa lekkiego Alpine zamiast Debian slim)
 2. **docker push** – wysyła obraz do Google Container Registry (GCR) w projekcie
 3. **sed + kubectl apply** – modyfikuje manifest Kubernetes (`k8s.yaml`), podmieniając nazwę obrazu na pełną ścieżkę GCR, i wdraża na klaster
 4. **kubectl rollout status** – czeka aż deployment będzie gotowy (timeout 120 sekund)

@@ -87,6 +87,10 @@ echo "  kubectl skonfigurowany."
 # --- 3. Mock backend ---
 echo ""
 echo ">>> [3/4] Deploy mock backend..."
+
+# Pre-pull obrazu bazowego (widoczny postęp pobierania)
+echo "  Pobieranie obrazu bazowego python:3.11-alpine..."
+docker pull python:3.11-alpine
 cd "$ROOT_DIR/mock"
 
 if ! docker build -t "gcr.io/${PROJECT_ID}/mock-backend:latest" .; then
