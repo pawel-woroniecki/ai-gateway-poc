@@ -38,7 +38,7 @@ if [ -n "${1:-}" ]; then
   fi
   echo ">>> Użycie podanego suffixu: ${SUFFIX}"
 else
-  SUFFIX=$(LC_ALL=C tr -dc 'a-z' < /dev/urandom | head -c 4)
+  SUFFIX=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | LC_ALL=C tr -dc 'a-z' | head -c 4)
   echo ">>> Wylosowany suffix: ${SUFFIX}"
 fi
 
