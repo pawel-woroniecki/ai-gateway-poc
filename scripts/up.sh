@@ -44,7 +44,7 @@ echo "============================================"
 
 # --- 1. Terraform infra (GKE, VPC, SA) ---
 echo ""
-echo ">>> [1/4] Terraform apply – infrastruktura..."
+echo ">>> [1/5] Terraform apply – infrastruktura..."
 cd "${ROOT_DIR}/terraform/environments/dev"
 
 if ! terraform init -reconfigure \
@@ -72,7 +72,7 @@ echo "  Infrastruktura gotowa."
 
 # --- 2. kubectl config ---
 echo ""
-echo ">>> [2/4] Konfiguracja kubectl..."
+echo ">>> [2/5] Konfiguracja kubectl..."
 CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null)
 CLUSTER_LOCATION=$(terraform output -raw cluster_location 2>/dev/null)
 
@@ -86,7 +86,7 @@ echo "  kubectl skonfigurowany."
 
 # --- 3. Mock backend ---
 echo ""
-echo ">>> [3/4] Deploy mock backend..."
+echo ">>> [3/5] Deploy mock backend..."
 
 MOCK_IMAGE="$(ar_image mock-backend):latest"
 cd "$ROOT_DIR/mock"
@@ -113,7 +113,7 @@ echo "  Mock backend działa."
 
 # --- 4. Helm install LiteLLM ---
 echo ""
-echo ">>> [4/4] Helm install – LiteLLM..."
+echo ">>> [4/5] Helm install – LiteLLM..."
 cd "$ROOT_DIR"
 
 if ! helm upgrade --install litellm oci://ghcr.io/berriai/litellm-helm \

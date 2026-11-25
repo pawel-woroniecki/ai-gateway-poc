@@ -45,6 +45,12 @@ if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
   exit 0
 fi
 
+# --- 0. Ubij aktywne port-forwardy ---
+echo ""
+echo ">>> [0/4] Ubijanie port-forwardów..."
+pkill -f "port-forward" 2>/dev/null || true
+echo "  Gotowe."
+
 # --- 1. Helm uninstall ---
 echo ""
 echo ">>> [1/4] Helm uninstall – LiteLLM..."
