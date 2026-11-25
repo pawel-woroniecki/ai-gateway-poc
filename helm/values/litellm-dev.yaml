@@ -5,6 +5,12 @@
 
 replicaCount: 1
 
+# --- Deployment strategy ---
+# Recreate zamiast RollingUpdate – na single-node (e2-standard-2)
+# nie ma miejsca na 2 pody LiteLLM jednocześnie (każdy wymaga 4Gi RAM).
+strategy:
+  type: Recreate
+
 image:
   repository: ghcr.io/berriai/litellm
   tag: "main-latest"
